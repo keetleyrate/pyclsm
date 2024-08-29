@@ -7,7 +7,7 @@ import dolfinx
 from sympy import Polygon, Point
 import math
 import numpy as np
-from lib.bc import * 
+from bc import * 
 
 def unit_square(dx, show=False):
     n = math.ceil(1 / dx)

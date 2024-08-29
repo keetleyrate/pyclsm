@@ -1,9 +1,9 @@
-from lib.twophaseflow import *
-from lib.navierstokes import NSSolver
+from twophaseflow import *
+from navierstokes import NSSolver
 from petsc4py import PETSc
 import ufl
 from ufl import inner, dot, grad, dx, nabla_grad, div, ds
-from lib.solver import *
+from solver import *
 import numpy as np
 from dolfinx import default_scalar_type, fem
 

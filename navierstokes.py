@@ -2,8 +2,9 @@ from petsc4py import PETSc
 import ufl
 from ufl import inner, dot, grad, dx, nabla_grad, div, ds
 import numpy as np
-from dolfinx import fem
+from dolfinx import fem, default_scalar_type
 from dolfinx.mesh import locate_entities_boundary
+import dolfinx.fem.petsc as petsc
 import csv
 import shutil
 import pathlib
@@ -11,18 +12,20 @@ import pathlib
 def u_dot_grad(u):
     return dot(u, ufl.nabla_grad(u))
 
-class NSSolver:
+class IncompressibleNavierStokesSolver:
     """Class for solving the incompressable Navier-Stokes equations using the fenicsx framework."""
 
-    def __init__(self, mesh, _dt, velocity_space, pressure_space, density_space, kinematic=False) -> None:
+    def __init__(self, domain, timestep, p=2, density_viscosity_order=1, kinematic=False) -> None:
         """Creates a new solver object. Initalises variational forms used as well as solution
         fields for velocity, pressure, dencity and viscosity. Must be given the approprite
         function space objects the the soltuion will be defined over."""
+        mesh = domain.mesh
+        self.domain = domain
         self.mesh = mesh
         # Taylor-Hood Elements
-        self.pressure_space = pressure_space
-        self.velosity_space = velocity_space
-        self.density_space = density_space
+        self.pressure_space = fem.FunctionSpace(mesh, ("CG", p - 1))
+        self.velosity_space = fem.VectorFunctionSpace(mesh, ("CG", p))
+        self.density_space = fem.FunctionSpace(mesh, ("CG", density_viscosity_order))
         self.F_space = fem.VectorFunctionSpace(mesh, ("CG", 2))
         # Test and trail functions
         u_t = ufl.TrialFunction(self.velosity_space)
@@ -39,7 +42,7 @@ class NSSolver:
 
         # Constants
         self.mu = fem.Function(self.density_space)
-        dt = fem.Constant(mesh, PETSc.ScalarType(_dt))
+        dt = fem.Constant(mesh, PETSc.ScalarType(timestep))
 
         γ = lambda u: grad(u) + grad(u).T
         n = ufl.FacetNormal(mesh)
@@ -80,7 +83,10 @@ class NSSolver:
         # Create the pressure boundary condtions
         self.p_bcs = []
         self.t = 0
-        self.dt = _dt
+        self.dt = timestep
+        self.set_density_as_const(1)
+        self.set_viscosity_as_const(1)
+        self.reset()
 
     def set_pressure_bc(self, geometry_fn, fn):
         """Set a Dirichlet boundary condtion for pressure.
@@ -129,6 +135,18 @@ class NSSolver:
         """Set the viscosity of the fluid as a constant value."""
         self.mu.x.array[:] = mu_c * np.ones(self.mu.x.array.shape)
 
+    def set_no_slip(self, side):
+        no_slip = fem.Expression(fem.Constant(self.domain.mesh, default_scalar_type((0, 0))), self.velosity_space.element.interpolation_points())
+        self.u_bcs.append(self.domain.get_dolfnix_dirichlet_bc(no_slip, self.velosity_space, side))
+
+    def set_const_velocity_bc(self, U, side):
+        const = fem.Expression(fem.Constant(self.domain.mesh, default_scalar_type(U)), self.velosity_space.element.interpolation_points())
+        self.u_bcs.append(self.domain.get_dolfnix_dirichlet_bc(const, self.velosity_space, side))
+
+        
+
+
+
     def compute_vorticity(self):
         space = fem.FunctionSpace(self.mesh, ("CG", 2))
         omega = fem.Function(self.density_space)
@@ -167,7 +185,7 @@ class NSSolver:
             self.time_step()
             if (e := np.linalg.norm(last_u - self.u.x.array)) < tol:
                 break
-            #print(f"resdiual = {e:.4e}")
+            print(f"resdiual = {e:.4e}")
             last_u[:] = self.u.x.array[:]
             last_p[:] = self.p.x.array[:]
 

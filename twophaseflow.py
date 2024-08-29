@@ -1,28 +1,17 @@
 
-from lib.navierstokes import NSSolver
-from lib.levelset import LevelSetSolver, make_marker_function
-from lib.visualise import *
+from navierstokes import NSSolver
+from levelset import LevelSetSolver, make_marker_function
+from visualise import *
 from dolfinx import geometry, fem
 from dolfinx.mesh import exterior_facet_indices
 import ufl
 import math
 import matplotlib.pyplot as plt
-from lib.bc import *
+from bc import *
 import pathlib
 from mpi4py import MPI
 import csv
 import shutil
-
-
-def closest_in_sorted_array(v, array):
-    for i in range(len(array) - 1):
-        if array[i] <= v <= array[i + 1]:
-            return array[i]
-
-
-def write_2d_array(file, A):
-    for row in A:
-        file.write(",".join(list(map(str, row))) + "\n")
 
 class TwoPhaseFlowSolver:
 
@@ -65,12 +54,6 @@ class TwoPhaseFlowSolver:
         self.g = fem.Constant(mesh, default_scalar_type((0, -g)))
         self.surf_ten = fem.Function(self.velocity_space)
 
-
-
-        
-
-
-
     def compute_dencity(self):
         # Move dencity from previous time step into rho^n
         self.fluid_solver.rho_prev.x.array[:] = self.fluid_solver.rho.x.array[:] 
@@ -91,17 +74,7 @@ class TwoPhaseFlowSolver:
     def compute_forces(self):
         F = fem.Expression(self.fluid_solver.rho * self.g + self.sigma * self.surf_ten, self.fluid_solver.F_space.element.interpolation_points())
         self.fluid_solver.F.interpolate(F)
-
-    def update_dt(self):
-        self.u.interpolate(fem.Expression(self.fluid_solver.u[0], self.density_space.element.interpolation_points()))
-        self.v.interpolate(fem.Expression(self.fluid_solver.u[1], self.density_space.element.interpolation_points()))
-        u_max, v_max = max(np.abs(self.u.x.array)), max(np.abs(self.v.x.array))
-        rho = self.fluid_solver.rho.x.array
-        mu = self.fluid_solver.mu.x.array
-        T = (u_max + v_max) / self.dx + 8 / (min(rho * self.Re / mu) * self.dx**2)
-        self.dt = 1 / T
-        
-
+    
 
     def time_step(self, steps=1):
         for _ in range(steps):

@@ -5,8 +5,8 @@ from petsc4py import PETSc
 import ufl
 from ufl import inner, dot, grad, dx, div
 
-from lib.solver import *
-from lib.bc import *
+from solver import *
+from bc import *
 
 def make_marker_function(cx, cy, r, fluid_level, eps):
     def phi(x, y):
