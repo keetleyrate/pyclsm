@@ -24,7 +24,7 @@ class ConservativeLevelSet:
         self.advection_lhs = ufl.inner(phi_t, self.psi) * ufl.dx
 
         self.normal_projector = NormalProjector(dolfinx.fem.VectorFunctionSpace(mesh, ("P", p)), h)
-        
+
         
 
     def set_u(self, u):
@@ -47,6 +47,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotx
 from visualise import *
+from common import *
 from tqdm import tqdm
 import math
 
@@ -61,11 +62,11 @@ d = 0.05
 solver = ConservativeLevelSet(mesh, h, h / 10, circular_level_set(0.5, 0, 0.25, h**(1 - d) / 2))
 solver.set_u(u)
 T = 1
-for _ in tqdm(range(math.ceil(T / solver.dt))):
-    solver.advect()
+step_until(T, solver, lambda s: s.advect())
 
 
 fig, axes = plt.subplots()
 fem_plot_contor_filled(fig, axes, solver.phi, mesh, tree, (0, 2), (-0.5, 0.5), 100, levels=100)
+fem_plot_contor(fig, axes, solver.phi, mesh, tree, (0, 2), (-0.5, 0.5), 100, levels=[0.5], colors=["white"])
 axes.set_aspect("equal")
 plt.show()
