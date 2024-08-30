@@ -1,7 +1,9 @@
 import dolfinx
 import dolfinx.fem.petsc
 import ufl
+from ufl import inner, dx, grad
 from normal import NormalProjector
+from ellipticproject import EllipticProjector
 
 def circular_level_set(cx, cy, r, eps):
     def phi(w):
@@ -12,20 +14,25 @@ def circular_level_set(cx, cy, r, eps):
 
 class ConservativeLevelSet:
 
-    def __init__(self, mesh, h, dt, phi0, p=1) -> None:
+    def __init__(self, mesh, h, dt, phi0, p=1, d=0.1, tol=1, c_kappa=1, max_reinit_iters=1000) -> None:
         V_phi = dolfinx.fem.functionspace(mesh, ("P", p))
+        V_n = dolfinx.fem.VectorFunctionSpace(mesh, ("P", p))
         self.psi = ufl.TestFunction(V_phi)
-        phi_t = ufl.TrialFunction(V_phi)
+        self.phi_t = ufl.TrialFunction(V_phi)
         self.phi = dolfinx.fem.Function(V_phi)
+        self.n = dolfinx.fem.Function(V_n)
         self.phi.interpolate(phi0)
         self.h = h
         self.dt = dt
-    
-        self.advection_lhs = ufl.inner(phi_t, self.psi) * ufl.dx
+        self.dtau = h**(1 + d) / 2
+        self.eps = h**(1 - d) / 2
+        self.max_iters = max_reinit_iters
+        self.tol = tol
+        self.advection_lhs = ufl.inner(self.phi_t, self.psi) * ufl.dx
+        self.normal_projector = NormalProjector(V_n, h)
+        self.projector = EllipticProjector(V_phi, h, c_kappa)
+        self.kappa = dolfinx.fem.Function(V_phi)
 
-        self.normal_projector = NormalProjector(dolfinx.fem.VectorFunctionSpace(mesh, ("P", p)), h)
-
-        
 
     def set_u(self, u):
         self.u = u
@@ -41,6 +48,50 @@ class ConservativeLevelSet:
     def advect(self):
         self.advection_solver.solve()
 
+    def prepare_reinit(self):
+        self.normal_projector.set_function(self.phi)
+        self.n = self.normal_projector.compute_normals()
+        self.reinit_form = (
+            inner(self.phi_t - self.phi, self.psi) * dx
+            - self.dtau * (0.5*(self.phi + self.phi_t) - self.phi*self.phi_t) * inner(self.n, grad(self.psi)) * dx
+            + self.dtau * self.eps * inner(grad(0.5*(self.phi + self.phi_t)), self.n) * inner(self.n, grad(self.psi)) * dx
+        )
+        self.reinit_rhs = dolfinx.fem.form(ufl.rhs(self.reinit_form))
+        self.reinit_lhs = dolfinx.fem.form(ufl.lhs(self.reinit_form))
+        self.reinit_solver = dolfinx.fem.petsc.LinearProblem(
+            dolfinx.fem.form(self.reinit_lhs),
+            dolfinx.fem.form(self.reinit_rhs),
+            [],
+            self.phi,
+            petsc_options={"ksp_type": "minres", "pc_type": "hypre"}
+        )
+
+    def reinitalise(self):
+        tol = self.dtau * self.tol
+        for i in range(self.max_iters):
+            prev = np.copy(self.phi.x.array)
+            self.reinit_solver.solve()
+            if np.linalg.norm(self.phi.x.array - prev) < tol:
+                return i + 1
+            if np.isclose(np.linalg.norm(self.phi.x.array), 0):
+                raise RuntimeError("The level set blew up :(")
+        raise RuntimeError("The marker function didn't reinitialize :(")
+    
+    def transport(self, u):
+        self.set_u(u)
+        self.advect()
+        self.prepare_reinit()
+        self.reinitalise()
+
+    def compute_curvature(self):
+        self.normal_projector.set_function(self.phi)
+        self.n = self.normal_projector.compute_normals()
+        self.projector.set_projected_function(-ufl.div(self.n))
+        self.kappa = self.projector.project()
+        return self.kappa
+
+    
+
 
 from mesh2d import rectangle
 import numpy as np
@@ -48,25 +99,43 @@ import matplotlib.pyplot as plt
 import matplotx
 from visualise import *
 from common import *
-from tqdm import tqdm
-import math
-
 plt.style.use(matplotx.styles.ayu["dark"])
 
-h = 0.05
-mesh, tree = rectangle((0, -0.5), (2, 0.5), h)
-V_u = dolfinx.fem.VectorFunctionSpace(mesh, ("P", 2))
-u = dolfinx.fem.Function(V_u)
-u.interpolate(lambda x: (x[0] / x[0], 0 * x[0]))
-d = 0.05
-solver = ConservativeLevelSet(mesh, h, h / 10, circular_level_set(0.5, 0, 0.25, h**(1 - d) / 2))
-solver.set_u(u)
-T = 1
-step_until(T, solver, lambda s: s.advect())
+def constant_test():
+    hs = []
+    es = []
+    for n in [2, 4, 8, 16, 32]:
+        h = 1 / n
+        mesh, _ = rectangle((0, -0.5), (2, 0.5), h)
+        V_u = dolfinx.fem.VectorFunctionSpace(mesh, ("P", 2))
+        u = dolfinx.fem.Function(V_u)
+        u.interpolate(constant((1, 0), mesh, V_u))
+        d = 0.1
+        solver = ConservativeLevelSet(mesh, h, h / 10, circular_level_set(0.5, 0, 0.25, h**(1 - d) / 2), tol=1, p=1)
+        T = 1
+        step_until(T, solver, lambda s: s.transport(u))
+
+        phi_exact = dolfinx.fem.Function(dolfinx.fem.functionspace(mesh, ("P", 1)))
+        phi_exact.interpolate(circular_level_set(1.5, 0, 0.25, h**(1 - d) / 2))
+
+        error = ufl.sqrt(ufl.inner(solver.phi - phi_exact, solver.phi - phi_exact)) * ufl.dx
+        es.append(dolfinx.fem.assemble_scalar(dolfinx.fem.form(error)))
+        hs.append(h)
+
+    h = np.array(hs)
+    e = np.array(es)
+
+    logh = np.log2(h)
+    loge = np.log2(e)
+
+    a, _ = np.polyfit(logh, loge, deg=1)
+    print("Convergence: ", a)
 
 
-fig, axes = plt.subplots()
-fem_plot_contor_filled(fig, axes, solver.phi, mesh, tree, (0, 2), (-0.5, 0.5), 100, levels=100)
-fem_plot_contor(fig, axes, solver.phi, mesh, tree, (0, 2), (-0.5, 0.5), 100, levels=[0.5], colors=["white"])
-axes.set_aspect("equal")
-plt.show()
+
+# fig, axes = plt.subplots()
+# fem_plot_contor_filled(fig, axes, solver.phi, mesh, tree, (0, 2), (-0.5, 0.5), 100, levels=100)
+# fem_plot_contor(fig, axes, solver.phi, mesh, tree, (0, 2), (-0.5, 0.5), 100, levels=[0.5], colors=["white"])
+# fem_plot_vectors(axes, solver.n, mesh, tree, (0, 2), (-0.5, 0.5), 30)
+# axes.set_aspect("equal")
+# plt.show()

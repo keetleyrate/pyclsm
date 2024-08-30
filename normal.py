@@ -8,6 +8,7 @@ import mpi4py
 import matplotlib.pyplot as plt
 import numpy as np
 from visualise import *
+from common import *
 
 class NormalProjector:
 
@@ -32,11 +33,8 @@ class NormalProjector:
         return n_h
     
 def test():
-    hs = []
-    es = []
-
-    for n in [2, 4, 8, 16, 32, 64]:
-        h = 1 / n
+    def find_error(h):
+        n = int(1 / h)
         mesh = dolfinx.mesh.create_unit_square(mpi4py.MPI.COMM_WORLD, n, n, cell_type=dolfinx.mesh.CellType.quadrilateral)
         tree = dolfinx.geometry.bb_tree(mesh, 2)
         f_space = dolfinx.fem.functionspace(mesh, ("P", 2))
@@ -49,14 +47,5 @@ def test():
         n = dolfinx.fem.Function(Vh)
         n.interpolate(lambda x: (x[0] / np.sqrt(x[0]**2 + x[1]**2), x[1] / np.sqrt(x[0]**2 + x[1]**2)))
         error = ufl.sqrt(ufl.inner(n - nh, n - nh)) * ufl.dx
-        es.append(dolfinx.fem.assemble_scalar(dolfinx.fem.form(error)))
-        hs.append(h)
-
-    h = np.array(hs)
-    e = np.array(es)
-
-    logh = np.log2(h)
-    loge = np.log2(e)
-
-    a, _ = np.polyfit(logh, loge, deg=1)
-    print("Convergence: ", a)
+        return dolfinx.fem.assemble_scalar(dolfinx.fem.form(error))
+    compute_convergence(find_error, 6)
