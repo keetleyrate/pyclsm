@@ -22,11 +22,11 @@ class NormalProjector:
         
 
     def compute_normals(self):
-        nabla_f = self.projector.project()
+        self.nabla_f = self.projector.project()
         n_h = dolfinx.fem.Function(self.Vh)
         n_h.interpolate(
             dolfinx.fem.Expression(
-                nabla_f / (ufl.sqrt(ufl.inner(nabla_f, nabla_f)) + self.delta),
+                self.nabla_f / (ufl.sqrt(ufl.inner(self.nabla_f, self.nabla_f)) + self.delta),
                 self.Vh.element.interpolation_points()
             )
         )

@@ -5,6 +5,8 @@ import numpy as np
 from dolfinx import fem, default_scalar_type
 from dolfinx.mesh import locate_entities_boundary
 import dolfinx.fem.petsc as petsc
+import dolfinx
+import mpi4py
 import csv
 import shutil
 import pathlib
@@ -15,12 +17,10 @@ def u_dot_grad(u):
 class IncompressibleNavierStokesSolver:
     """Class for solving the incompressable Navier-Stokes equations using the fenicsx framework."""
 
-    def __init__(self, domain, timestep, p=2, density_viscosity_order=1, kinematic=False) -> None:
+    def __init__(self, mesh, timestep, p=2, density_viscosity_order=1, kinematic=False) -> None:
         """Creates a new solver object. Initalises variational forms used as well as solution
         fields for velocity, pressure, dencity and viscosity. Must be given the approprite
         function space objects the the soltuion will be defined over."""
-        mesh = domain.mesh
-        self.domain = domain
         self.mesh = mesh
         # Taylor-Hood Elements
         self.pressure_space = fem.FunctionSpace(mesh, ("CG", p - 1))
@@ -135,17 +135,6 @@ class IncompressibleNavierStokesSolver:
         """Set the viscosity of the fluid as a constant value."""
         self.mu.x.array[:] = mu_c * np.ones(self.mu.x.array.shape)
 
-    def set_no_slip(self, side):
-        no_slip = fem.Expression(fem.Constant(self.domain.mesh, default_scalar_type((0, 0))), self.velosity_space.element.interpolation_points())
-        self.u_bcs.append(self.domain.get_dolfnix_dirichlet_bc(no_slip, self.velosity_space, side))
-
-    def set_const_velocity_bc(self, U, side):
-        const = fem.Expression(fem.Constant(self.domain.mesh, default_scalar_type(U)), self.velosity_space.element.interpolation_points())
-        self.u_bcs.append(self.domain.get_dolfnix_dirichlet_bc(const, self.velosity_space, side))
-
-        
-
-
 
     def compute_vorticity(self):
         space = fem.FunctionSpace(self.mesh, ("CG", 2))
@@ -161,10 +150,6 @@ class IncompressibleNavierStokesSolver:
         dvdx.interpolate(fem.Expression(dv[0], self.density_space.element.interpolation_points()))
         omega.interpolate(fem.Expression(ufl.sqrt((dvdx - dudy)**2), self.density_space.element.interpolation_points()))
         return omega
-
-
-
-
 
     def time_step(self):
         """Perform a single timestep of the defined problem."""
@@ -189,60 +174,62 @@ class IncompressibleNavierStokesSolver:
             last_u[:] = self.u.x.array[:]
             last_p[:] = self.p.x.array[:]
 
-    def save_to_files(self, foldername, tol, compress=True, steps=float("inf")):
-        results_folder = pathlib.Path(foldername)
-        results_folder.mkdir(exist_ok=True, parents=True)
-
-        u_file = open(foldername + "/u.csv", "w")
-        u_writer = csv.writer(u_file)
-        p_file = open(foldername + "/p.csv", "w")
-        p_writer = csv.writer(p_file)
-
-        last_u = np.random.random(self.u.x.array.shape)
-        for i in range(steps):
-            if (r := np.linalg.norm(self.u.x.array - last_u)) < tol:
-                break;
-            print(f"r = {r:.2e}, step {i} of {steps}")
-            t = str(self.t)
-            u = list(np.array(self.u.x.array.copy(), dtype=np.float32))
-            p = list(np.array(self.p.x.array.copy(), dtype=np.float32))
-            u.append(t)
-            p.append(t)
-            u_writer.writerow(u)
-            p_writer.writerow(p)
-            last_u = np.copy(self.u.x.array)
-            self.time_step()
-
-        u_file.close()
-        p_file.close()
-        if compress:
-            shutil.make_archive(foldername, "zip", foldername)
-
-    def load_time_step(self, T):
-        for u_row, p_row in zip(self.u_reader, self.p_reader):
-            t = float(u_row[-1])
-            if t >= T:
-                self.u.x.array[:] = np.array(u_row[:-1])
-                self.p.x.array[:] = np.array(p_row[:-1])
-                self.t = t
-                return True
-        self.u.x.array[:] = np.array(u_row[:-1])
-        self.p.x.array[:] = np.array(p_row[:-1])
-        self.t = t
-        return False
-
-    def read_files(self, foldername):
-        self.u_file = open(foldername + "/u.csv")
-        self.u_reader = csv.reader(self.u_file)
-        self.p_file = open(foldername + "/p.csv")
-        self.p_reader = csv.reader(self.p_file)
-
-    def close_files(self):
-        self.u_file.close()
-        self.p_file.close()
-
     def reset(self):
         self.int_step_system = petsc.LinearProblem(self.int_step_a, self.int_step_L, self.u_bcs, self.u, petsc_options={"ksp_type": "bcgs", "pc_type": "jacobi"})
         self.pressure_step_system = petsc.LinearProblem(self.pressure_step_a, self.pressure_step_L, self.p_bcs, self.p, petsc_options={"ksp_type": "minres", "pc_type": "hypre"})
         self.correction_step_system = petsc.LinearProblem(self.correction_step_a, self.correction_step_L, self.u_bcs, self.u, petsc_options={"ksp_type": "cg", "pc_type": "sor"})
 
+
+from common import *
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotx
+from visualise import *
+from common import *
+from scipy.integrate import simpson
+
+def poiseuille_flow_test():
+    def compute_error(h):
+        n = math.ceil(1 / h)
+        mesh = dolfinx.mesh.create_unit_square(mpi4py.MPI.COMM_WORLD, n, n, cell_type=dolfinx.mesh.CellType.quadrilateral)
+        solver = IncompressibleNavierStokesSolver(mesh, h / 250)
+        exact = dolfinx.fem.Function(solver.velosity_space)
+        exact.interpolate(lambda x: (1/2 * x[1] * (1 - x[1]), 0 * x[0]))
+        solver.set_velosity_bc(y_equals(1), constant((0, 0), mesh, solver.velosity_space))
+        solver.set_velosity_bc(y_equals(0), constant((0, 0), mesh, solver.velosity_space))
+        solver.set_velosity_bc(x_equals(1), exact)
+        solver.set_velosity_bc(x_equals(0), exact)
+        # solver.set_pressure_bc(x_equals(0), constant(1, mesh, solver.pressure_space))
+        # solver.set_pressure_bc(x_equals(1), constant(0, mesh, solver.pressure_space))
+        solver.reset()
+        solver.to_steady_state(1e-8)
+        y = np.linspace(0, 1, 250)
+        x = np.full(250, 0.5)
+        x, y, u, _ = fem_vector_func_at_given_points(solver.u, mesh, dolfinx.geometry.bb_tree(mesh, 2), x, y)
+        axes = plt.axes()
+        u_e = 1/2 * y * (1 - y)
+        return simpson(y=np.abs(u - u_e), x=y)
+    compute_convergence(compute_error, [2, 4, 8, 16])
+
+       
+
+def couette_flow_test():
+    def compute_error(h):
+        n = math.ceil(1 / h)
+        mesh = dolfinx.mesh.create_unit_square(mpi4py.MPI.COMM_WORLD, n, n, cell_type=dolfinx.mesh.CellType.quadrilateral)
+        solver = IncompressibleNavierStokesSolver(mesh, h / 500)
+        exact = dolfinx.fem.Function(solver.velosity_space)
+        exact.interpolate(lambda x: (1/2 * x[1] * (1 - x[1]), 0 * x[0]))
+        solver.set_velosity_bc(y_equals(1), constant((1, 0), mesh, solver.velosity_space))
+        solver.set_velosity_bc(y_equals(0), constant((0, 0), mesh, solver.velosity_space))
+        solver.set_y_velocity(x_equals(0), dolfinx.default_scalar_type(0))
+        solver.set_y_velocity(x_equals(1), dolfinx.default_scalar_type(0))
+        solver.reset()
+        T = 0.1
+        step_until(T, solver, lambda s: s.time_step())
+        y = np.linspace(0, 1, 250)
+        x = np.full(250, 0.5)
+        x, y, u, _ = fem_vector_func_at_given_points(solver.u, mesh, dolfinx.geometry.bb_tree(mesh, 2), x, y)
+        u_e = y - 2 / np.pi * sum(1/n * np.exp(-n**2*np.pi**2*T) * np.sin(n*np.pi*(1 - y)) for n in range(1, 100))
+        return simpson(y=np.abs(u - u_e), x=y)
+    compute_convergence(compute_error, 4)

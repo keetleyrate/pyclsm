@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from visualise import *
 import scienceplots
-from dolfinx import fem
+from dolfinx import fem, geometry
 
 plt.style.use(['science', 'no-latex', 'grid'])
 plt.rcParams["figure.figsize"] = (6, 6)
@@ -14,8 +14,8 @@ def animation_update(frame, plotter, reader, skip_every):
     print(f"Writing t: {t:.2f}")
     for _ in range(skip_every):
         _ = next(reader)
-    plotter.solver.level_set_solver.phi.x.array[:] = phi
-    plotter.solver.fluid_solver.u.x.array[:] = u
+    plotter.solver.level_set.phi.x.array[:] = phi
+    plotter.solver.u.x.array[:] = u
     plotter.axes.set_title(f"$t={t:.2f}$")
     plotter.plot_from_solver()
 
@@ -32,7 +32,7 @@ class Plotter:
         self.ylabel = f"${ylabel}$"
         self.fsize = 14
         self.mesh = solver.mesh
-        self.tree = solver.tree
+        self.tree = geometry.bb_tree(solver.mesh, 2)
         self.norm = norm
         self.fluid_points = fluid_points
         self.phi_points = phi_points
@@ -86,29 +86,29 @@ class Plotter:
 
     def plot_from_solver(self):
         if self.fluid_points > 0:
-            phi = self.solver.level_set_solver.phi
+            phi = self.solver.level_set.phi
             if self.mask_with_phi:
                 if self.one_minus:
                     phi = 1 - phi
-                self.solver.fluid_solver.u.interpolate(
-                    fem.Expression(self.solver.fluid_solver.u * phi, self.solver.velocity_space.element.interpolation_points())
+                self.solver.u.interpolate(
+                    fem.Expression(self.solver.u * phi, self.solver.velocity_space.element.interpolation_points())
                 )
-            self.plot_vector_field(self.solver.fluid_solver.u, self.fluid_points, self.random_vec_points)
+            self.plot_vector_field(self.solver.u, self.fluid_points, self.random_vec_points)
         if self.interface_points > 0:
-            self.plot_contors(self.solver.level_set_solver.phi, self.interface_points, self.contour_levels, colorbar=self.colorbar)
+            self.plot_contors(self.solver.level_set.phi, self.interface_points, self.contour_levels, colorbar=self.colorbar)
         if self.visc_points > 0:
-            self.solver.compute_viscosity()
-            self.plot_scalar_field(self.solver.fluid_solver.mu, self.visc_points, self.levels, colorbar=self.colorbar)
+            self.solver.set_dencity_and_viscosity()
+            self.plot_scalar_field(self.solver.mu, self.visc_points, self.levels, colorbar=self.colorbar)
         if self.density_points > 0:
-            self.solver.compute_dencity()
-            self.plot_scalar_field(self.solver.fluid_solver.rho, self.density_points, self.levels, colorbar=self.colorbar)
+            self.solver.set_dencity_and_viscosity()
+            self.plot_scalar_field(self.solver.rho, self.density_points, self.levels, colorbar=self.colorbar)
         if self.phi_points > 0:
-            self.plot_scalar_field(self.solver.level_set_solver.phi, self.phi_points, self.levels, colorbar=self.colorbar)
+            self.plot_scalar_field(self.solver.level_set.phi, self.phi_points, self.levels, colorbar=self.colorbar)
         if self.mag_points > 0:
             self.plot_scalar_field(self.solver.fluid_mags_as_function(), self.mag_points, self.levels, colorbar=self.colorbar)
         if self.kappa_points > 0:
             self.solver.level_set_solver.compute_curvature()
-            self.plot_scalar_field(self.solver.level_set_solver.kappa, self.kappa_points, self.levels, colorbar=self.colorbar)
+            self.plot_scalar_field(self.solver.level_set.kappa, self.kappa_points, self.levels, colorbar=self.colorbar)
         self.axes.set_aspect("equal")
         self.set_ticks()
         self.set_lims()
