@@ -1,4 +1,4 @@
-from clevelset import ConservativeLevelSet, circular_level_set
+from clevelset import ConservativeLevelSet, circular_level_set, box_phi
 from navierstokes import IncompressibleNavierStokesSolver
 from common import *
 from plotter import *
@@ -8,14 +8,15 @@ import csv
 class IncompressibleTwoPhaseFlowSolver(IncompressibleNavierStokesSolver):
 
     def __init__(self, mesh, h, dt, rho1, rho2, mu1, mu2, sigma, g, phi0, p_phi=1, d=0.1) -> None:
-        super().__init__(mesh, dt)
+        super().__init__(mesh, dt, kinematic=True)
         self.mesh = mesh
-        self.level_set = ConservativeLevelSet(mesh, h, dt, phi0, p=p_phi, d=d)
-        self.rho1 = rho1
-        self.rho2 = rho2
-        self.mu1 = mu1
-        self.mu2 = mu2
-        self.sigma = sigma
+        self.level_set = ConservativeLevelSet(mesh, h, dt, phi0, p=p_phi, d=d, c_kappa=10)
+        self.rho1 = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(rho1))
+        self.rho2 = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(rho2))
+        self.mu1 = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(mu1))
+        self.mu2 = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(mu2))
+        self.has_surface_tension = sigma > 0
+        self.sigma = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(sigma))
         self.g = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type((0, -g)))
 
     def set_dencity_and_viscosity(self):
@@ -30,7 +31,7 @@ class IncompressibleTwoPhaseFlowSolver(IncompressibleNavierStokesSolver):
         self.mu.interpolate(mu)
 
     def set_body_forces(self):
-        if self.sigma > 0:
+        if self.has_surface_tension:
             kappa = self.level_set.compute_curvature()
             grad_phi = self.level_set.normal_projector.nabla_f
             self.F.interpolate(
@@ -57,7 +58,7 @@ class IncompressibleTwoPhaseFlowSolver(IncompressibleNavierStokesSolver):
             super().time_step()
 
     def set_no_slip_everywhere(self):
-        self.u_bcs.append(create_no_slip_bc(self.mesh, self.ns_solver.velosity_space))
+        self.u_bcs.append(create_no_slip_bc(self.mesh, self.velosity_space))
 
     def save_to_files(self, foldername, T, steps=1):
         results_folder = pathlib.Path(foldername)
@@ -136,5 +137,23 @@ def shear_test():
     plotter.save_to_mp4("videos/shear.mp4")
 
    
+from mesh2d import rectangle
 
-shear_test()
+def surface_tension():
+    n = 16
+    h = 1 / n
+    mesh, tree = rectangle((0, 0), (2, 2), h)
+    #mesh = dolfinx.mesh.create_unit_square(mpi4py.MPI.COMM_WORLD, n, n, cell_type=dolfinx.mesh.CellType.quadrilateral)
+
+    solver = IncompressibleTwoPhaseFlowSolver(mesh, h, h / 10, 0.1, 1, 0.1, 1, 10, 0, circular_level_set(0, 0, 0.2, 0.1), d=0.05)
+    solver.set_no_slip_everywhere()
+    solver.level_set.phi.interpolate(box_phi(0.5, 0.5, 1.5, 1.5, solver.level_set.eps))
+    plotter = Plotter(solver, (0, 2), (0, 2), 0.1, contor_color="white", filename="sols/tens")
+    # solver.time_step()
+    # plotter.plot_from_solver()
+    # plotter.show()
+    #solver.save_to_files("sols/tens", 2, steps=5)
+    plotter.save_to_mp4("videos/tens.mp4")
+   
+
+surface_tension()

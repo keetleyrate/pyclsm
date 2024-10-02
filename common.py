@@ -14,7 +14,7 @@ def create_no_slip_bc(mesh, space):
     tdim = mesh.topology.dim
     fdim = tdim - 1
     mesh.topology.create_connectivity(fdim, tdim)
-    boundary_facets = dolfinx.mesh.folexterior_facet_indices(mesh.topology)
+    boundary_facets = dolfinx.mesh.exterior_facet_indices(mesh.topology)
     boundary_dofs = dolfinx.fem.locate_dofs_topological(space, fdim, boundary_facets)
     no_slip = dolfinx.fem.Function(space)
     no_slip.interpolate(constant((0, 0), mesh, space))

@@ -232,4 +232,4 @@ def couette_flow_test():
         x, y, u, _ = fem_vector_func_at_given_points(solver.u, mesh, dolfinx.geometry.bb_tree(mesh, 2), x, y)
         u_e = y - 2 / np.pi * sum(1/n * np.exp(-n**2*np.pi**2*T) * np.sin(n*np.pi*(1 - y)) for n in range(1, 100))
         return simpson(y=np.abs(u - u_e), x=y)
-    compute_convergence(compute_error, 4)
+    compute_convergence(compute_error, [2, 3, 4, 5, 6, 7, 8])

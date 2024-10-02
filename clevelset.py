@@ -4,18 +4,28 @@ import ufl
 from ufl import inner, dx, grad
 from normal import NormalProjector
 from ellipticproject import EllipticProjector
+from scipy.integrate import simpson
 
 def circular_level_set(cx, cy, r, eps):
     def phi(w):
         x, y = w[0], w[1]
         dist = np.sqrt((x - cx)**2 + (y - cy)**2)
-        return 1 / (1 + np.exp((dist - r) / eps))
+        return 1 / (1 + np.exp((dist - r)/eps))
     return phi
+
+def phi(x, a, eps):
+    return 1 / (1 + np.exp((a - x) / eps))
+
+def box_phi(x1, y1, x2, y2, eps):
+    def f(w):
+        x, y = w[0], w[1]
+        return 1 - (phi(x, x1, eps) - phi(x, x2, eps)) * (1 - phi(y, y2, eps)) * phi(y, y1, eps)
+    return f
 
 class ConservativeLevelSet:
 
-    def __init__(self, mesh, h, dt, phi0, p=1, d=0.1, tol=1, c_kappa=1, max_reinit_iters=1000) -> None:
-        V_phi = dolfinx.fem.functionspace(mesh, ("P", p))
+    def __init__(self, mesh, h, dt, phi0, p=1, d=0.1, tol=1, c_normal=2, c_kappa=1, max_reinit_iters=1000) -> None:
+        V_phi = dolfinx.fem.functionspace(mesh, ("CG", p))
         V_n = dolfinx.fem.VectorFunctionSpace(mesh, ("P", p))
         self.psi = ufl.TestFunction(V_phi)
         self.phi_t = ufl.TrialFunction(V_phi)
@@ -29,7 +39,7 @@ class ConservativeLevelSet:
         self.max_iters = max_reinit_iters
         self.tol = tol
         self.advection_lhs = ufl.inner(self.phi_t, self.psi) * ufl.dx
-        self.normal_projector = NormalProjector(V_n, h)
+        self.normal_projector = NormalProjector(V_n, h, c_e=c_normal)
         self.projector = EllipticProjector(V_phi, h, c_kappa)
         self.kappa = dolfinx.fem.Function(V_phi)
 
@@ -132,10 +142,22 @@ def constant_test():
     print("Convergence: ", a)
 
 
+def curvature_test():
+    def kappa_error(h):
+        mesh, tree = rectangle((-1, -1), (1, 1), h)
+        V_u = dolfinx.fem.VectorFunctionSpace(mesh, ("P", 2))
+        u = dolfinx.fem.Function(V_u)
+        u.interpolate(lambda x: (-2 * np.pi * x[1], 2 * np.pi * x[0]))
+        d = 0.1
+        r = 0.25
+        solver = ConservativeLevelSet(mesh, h, h / 25, circular_level_set(0.5, 0, r, h**(1 - d) / 2), tol=1, p=1, c_normal=10, c_kappa=20)
+        T = 1
+        step_until(T, solver, lambda s: s.transport(u))
+        theta = np.linspace(0, 2 * np.pi, 600)
+        kappa_h = solver.compute_curvature()
+        x, y, kappa_circle = fem_scalar_func_at_given_points(kappa_h, mesh, tree, 0.5 + r * np.cos(theta), r * np.sin(theta))
+        kappa_e = np.sqrt(simpson(np.square(kappa_circle.reshape((600,)) - 1 / r), theta))
+        return kappa_e
+    compute_convergence(kappa_error, [2, 6, 10, 14, 18, 22])
 
-# fig, axes = plt.subplots()
-# fem_plot_contor_filled(fig, axes, solver.phi, mesh, tree, (0, 2), (-0.5, 0.5), 100, levels=100)
-# fem_plot_contor(fig, axes, solver.phi, mesh, tree, (0, 2), (-0.5, 0.5), 100, levels=[0.5], colors=["white"])
-# fem_plot_vectors(axes, solver.n, mesh, tree, (0, 2), (-0.5, 0.5), 30)
-# axes.set_aspect("equal")
-# plt.show()
+
