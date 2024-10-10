@@ -7,7 +7,7 @@ import csv
 
 class IncompressibleTwoPhaseFlowSolver(IncompressibleNavierStokesSolver):
 
-    def __init__(self, mesh, h, dt, rho1, rho2, mu1, mu2, sigma, g, phi0, p_phi=1, d=0.1) -> None:
+    def __init__(self, mesh, h, dt, rho1, rho2, mu1, mu2, sigma, g, phi0, p_phi=1, d=0.1, kinematic=True, c_kappa=20) -> None:
         super().__init__(mesh, dt, kinematic=True)
         self.mesh = mesh
         self.level_set = ConservativeLevelSet(mesh, h, dt, phi0, p=p_phi, d=d, c_kappa=10)
@@ -156,4 +156,3 @@ def surface_tension():
     plotter.save_to_mp4("videos/tens.mp4")
    
 
-surface_tension()
