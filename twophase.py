@@ -18,6 +18,7 @@ class IncompressibleTwoPhaseFlowSolver(IncompressibleNavierStokesSolver):
         self.has_surface_tension = sigma > 0
         self.sigma = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(sigma))
         self.g = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type((0, -g)))
+        self.step_proc = None
 
     def set_dencity_and_viscosity(self):
         self.rho_prev.x.array[:] = self.rho.x.array[:] 
@@ -48,6 +49,8 @@ class IncompressibleTwoPhaseFlowSolver(IncompressibleNavierStokesSolver):
                 )
             )
 
+    def set_time_step_proc(self, proc):
+        self.step_proc = proc
     
     def time_step(self, steps=1):
         for _ in range(steps):
@@ -56,6 +59,8 @@ class IncompressibleTwoPhaseFlowSolver(IncompressibleNavierStokesSolver):
             self.set_body_forces()
             self.reset()
             super().time_step()
+            if self.step_proc is not None:
+                self.step_proc(self)
 
     def set_no_slip_everywhere(self):
         self.u_bcs.append(create_no_slip_bc(self.mesh, self.velosity_space))
