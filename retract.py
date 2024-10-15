@@ -26,7 +26,9 @@ def write_aspect(solver):
     
 Re = int(sys.argv[1])
 
-n = 25
+print(Re)
+
+n = 100
 h = 1 / n
 d = 0.05
 eps = h ** (1 - d) / 2
@@ -48,16 +50,16 @@ solver.set_y_velocity(y_equals(0), default_scalar_type(0))
 
 aspects = []
 
-solver.set_time_step_proc(write_aspect)
+#solver.set_time_step_proc(write_aspect)
 
 path = f"sols/retract-{Re}"
 solver.save_to_files(path, 1, 5)
 
-with open(f"records/aspect-{Re}.txt", "w") as infile:
-    infile.write("\n".join(map(str, aspects)))
+#with open(f"records/aspect-{Re}.txt", "w") as infile:
+ #   infile.write("\n".join(map(str, aspects)))
 
 
-#plotter = Plotter(solver, (0, 1), (0, 1), 0.2, filename=path, visc_points=200, contor_color="lightblue")
-# plotter.plot_from_solver()
+plotter = Plotter(solver, (0, 1), (0, 1), 0.2, filename=path, visc_points=200, contor_color="lightblue")
+#plotter.plot_from_solver()
 # plotter.show()
-#plotter.save_to_mp4("videos/retract_long.mp4")
+plotter.save_to_mp4(f"videos/retract-{Re}.mp4")
