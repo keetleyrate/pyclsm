@@ -38,7 +38,7 @@ box = box_phi(-0.5, -0.5, a, a / 4, eps)
 We = 1
 D = 1
 M = 0.01
-solver = IncompressibleTwoPhaseFlowSolver(mesh, h, h / 10, 1, D, 1 / Re, M / Re, 1 / We, 0, box, d=d, c_kappa=20)
+solver = IncompressibleTwoPhaseFlowSolver(mesh, h, h / 10, 1, D, 1 / Re, M / Re, 1 / We, 0, box, d=d, c_kappa=20, kinematic=False)
 
 no_slip = constant((0, 0), mesh, solver.velosity_space)
 
