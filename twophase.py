@@ -7,10 +7,10 @@ import csv
 
 class IncompressibleTwoPhaseFlowSolver(IncompressibleNavierStokesSolver):
 
-    def __init__(self, mesh, h, dt, rho1, rho2, mu1, mu2, sigma, g, phi0, p_phi=1, d=0.1, kinematic=True, c_kappa=20) -> None:
+    def __init__(self, mesh, h, dt, rho1, rho2, mu1, mu2, sigma, g, phi0, p_phi=1, d=0.1, kinematic=True, c_kappa=20, c_normal=2) -> None:
         super().__init__(mesh, dt, kinematic=kinematic)
         self.mesh = mesh
-        self.level_set = ConservativeLevelSet(mesh, h, dt, phi0, p=p_phi, d=d, c_kappa=10)
+        self.level_set = ConservativeLevelSet(mesh, h, dt, phi0, p=p_phi, d=d, c_kappa=c_kappa, c_normal=c_normal)
         self.rho1 = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(rho1))
         self.rho2 = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(rho2))
         self.mu1 = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(mu1))
