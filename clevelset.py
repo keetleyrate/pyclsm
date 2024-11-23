@@ -22,6 +22,15 @@ def box_phi(x1, y1, x2, y2, eps):
         return 1 - (phi(x, x1, eps) - phi(x, x2, eps)) * (1 - phi(y, y2, eps)) * phi(y, y1, eps)
     return f
 
+def line_phi(u, v, eps):
+    def f(w):
+        x, y = w[0], w[1]
+        delta = (u * x + v * y) / (u**2 + v**2)
+        dist = np.sqrt((x - delta * u)**2 + (y - delta * v)**2)
+        return 1 / (1 + np.exp(dist / eps))
+    return f
+
+
 class ConservativeLevelSet:
 
     def __init__(self, mesh, h, dt, phi0, p=1, d=0.1, tol=1, c_normal=2, c_kappa=1, max_reinit_iters=1000) -> None:

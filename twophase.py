@@ -7,7 +7,7 @@ import csv
 
 class IncompressibleTwoPhaseFlowSolver(IncompressibleNavierStokesSolver):
 
-    def __init__(self, mesh, h, dt, rho1, rho2, mu1, mu2, sigma, g, phi0, p_phi=1, d=0.1, kinematic=True, c_kappa=20, c_normal=2) -> None:
+    def __init__(self, mesh, h, dt, rho1, rho2, mu1, mu2, sigma, g, phi0, p_phi=1, d=0.1, kinematic=True, c_kappa=20, c_normal=1) -> None:
         super().__init__(mesh, dt, kinematic=kinematic)
         self.mesh = mesh
         self.level_set = ConservativeLevelSet(mesh, h, dt, phi0, p=p_phi, d=d, c_kappa=c_kappa, c_normal=c_normal)
@@ -20,12 +20,15 @@ class IncompressibleTwoPhaseFlowSolver(IncompressibleNavierStokesSolver):
         self.g = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type((0, -g)))
         self.step_proc = None
 
-    def set_dencity_and_viscosity(self):
+    def set_dencity(self):
         self.rho_prev.x.array[:] = self.rho.x.array[:] 
         rho = dolfinx.fem.Expression(
             self.rho1 + (self.rho2 - self.rho1) * self.level_set.phi, self.density_space.element.interpolation_points()
         )
         self.rho.interpolate(rho)
+      
+
+    def set_viscosity(self):
         mu = dolfinx.fem.Expression(
             self.mu1 + (self.mu2 - self.mu1) * self.level_set.phi, self.density_space.element.interpolation_points()
         )
@@ -55,12 +58,14 @@ class IncompressibleTwoPhaseFlowSolver(IncompressibleNavierStokesSolver):
     def time_step(self, steps=1):
         for _ in range(steps):
             self.level_set.transport(self.u)
-            self.set_dencity_and_viscosity()
+            self.set_dencity()
+            self.set_viscosity()
             self.set_body_forces()
             self.reset()
-            super().time_step()
-            if self.step_proc is not None:
-                self.step_proc(self)
+            self.compute_u()
+
+    def compute_u(self):
+        super().time_step()
 
     def set_no_slip_everywhere(self):
         self.u_bcs.append(create_no_slip_bc(self.mesh, self.velosity_space))

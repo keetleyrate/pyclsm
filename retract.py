@@ -28,17 +28,17 @@ Re = int(sys.argv[1])
 
 print(Re)
 
-n = 128
+n = 32
 h = 1 / n
-d = 0.05
+d = 0.1
 eps = h ** (1 - d) / 2
 mesh, tree = unit_square(h)
 a = 0.75
-box = box_phi(-0.5, -0.5, a, a / 4, eps)
+box = box_phi(-0.5, -0.5, a, a/4, eps)
 We = 1
 D = 1
 M = 0.01
-solver = IncompressibleTwoPhaseFlowSolver(mesh, h, h / 10, 1, D, 1 / Re, M / Re, 1 / We, 0, box, d=d, kinematic=False)
+solver = IncompressibleTwoPhaseFlowSolver(mesh, h, h / 10, 1, D, 1 / Re, M / Re, 1 / We, 0, box, d=d, kinematic=False, c_normal=0.1)
 
 no_slip = constant((0, 0), mesh, solver.velosity_space)
 
@@ -53,7 +53,7 @@ aspects = []
 #solver.set_time_step_proc(write_aspect)
 
 path = f"sols/retract-{Re}"
-solver.save_to_files(path, 1, 5)
+solver.save_to_files(path, 5, 5)
 
 #with open(f"records/aspect-{Re}.txt", "w") as infile:
  #   infile.write("\n".join(map(str, aspects)))

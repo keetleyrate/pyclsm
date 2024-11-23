@@ -105,6 +105,7 @@ def fem_plot_contor(fig, axes, u, mesh, tree, xbounds, ybounds, n_points, levels
         fig.colorbar(conts)
     else:
         conts = axes.contour(x, y, u, levels=levels, linewidths=linewidths, colors=colors)
+        #fig.colorbar(conts)
     
 
 def read_solution_files(solver, foldername):

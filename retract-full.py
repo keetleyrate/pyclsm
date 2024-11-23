@@ -25,11 +25,11 @@ def write_aspect(solver):
 
     
 Re = 1#int(sys.argv[1])
-c_normal = float(sys.argv[1])
+c_normal = 0.1#float(sys.argv[1])
 
 print(c_normal)
 
-n = 128
+n = 32
 h = 1 / n
 d = 0.1
 eps = h ** (1 - d) / 2
@@ -51,11 +51,14 @@ aspects = []
 
 path = f"sols/retract-full-{Re}"
 T = 3
-solver.save_to_files(path, T, 5)
+solver.time_step()
+#solver.save_to_files(path, T, 5)
 
 #with open(f"records/aspect-{Re}.txt", "w") as infile:
  #   infile.write("\n".join(map(str, aspects)))
 
 
-plotter = Plotter(solver, (-1, 1), (-1, 1), 0.2, filename=path, fluid_points=30, contor_color="lightblue", scale=None)
-plotter.save_to_mp4(f"videos/retract-full-c-{c_normal}.mp4")
+plotter = Plotter(solver, (-1, 1), (-1, 1), 0.2, filename=path, visc_points=100, levels=100, contor_color="lightblue", colorbar=True)
+#plotter.save_to_mp4(f"videos/retract-full-c-{c_normal}.mp4")
+plotter.plot_from_solver()
+plotter.show()

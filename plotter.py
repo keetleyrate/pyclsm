@@ -97,10 +97,10 @@ class Plotter:
         if self.interface_points > 0:
             self.plot_contors(self.solver.level_set.phi, self.interface_points, self.contour_levels, colorbar=self.colorbar)
         if self.visc_points > 0:
-            self.solver.set_dencity_and_viscosity()
+            self.solver.set_viscosity()
             self.plot_scalar_field(self.solver.mu, self.visc_points, self.levels, colorbar=self.colorbar)
         if self.density_points > 0:
-            self.solver.set_dencity_and_viscosity()
+            self.solver.set_dencity()
             self.plot_scalar_field(self.solver.rho, self.density_points, self.levels, colorbar=self.colorbar)
         if self.phi_points > 0:
             self.plot_scalar_field(self.solver.level_set.phi, self.phi_points, self.levels, colorbar=self.colorbar)

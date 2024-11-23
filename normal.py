@@ -12,7 +12,7 @@ from common import *
 
 class NormalProjector:
 
-    def __init__(self, Vh, h, c_e=2, delta=1e-6) -> None:
+    def __init__(self, Vh, h, c_e=2, delta=1e-4) -> None:
         self.Vh = Vh
         self.projector = EllipticProjector(Vh, h, c_e)
         self.delta = delta
