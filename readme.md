@@ -3,98 +3,7 @@
 An implementation of a conservative level set method for two-phase flow simulations using the FEniCSx finite element library.
 
 ## Usage
-
-### Navier-Stokes Projection Solver
-
-#### Couette flow
-
-To demonstrate how to use the pyclsm's fluid solver we will consider the problem of 2D Couette flow. In Couette flow, viscous fluid occupies the space between two infinitely long surfaces, one of which moves tangentially relative to the other. We assume that the velocity ($\mathbf{u}=(u,v)$) is unidirectional so that $v=0$. Incompressiblity then implies that $\frac{∂ u}{∂ x} = 0$ or equivalently that $u$ only depends on $y$ and $t$.
-
-
-<p align="center">
-    <img src="couette.png" width="250" height="250"  class="center"/>
-</p>
-
-For simplicity, we will consider when the top surface is moving at a constant velocity of $1$ meter per second, the plates are $1$ meter apart and furthermore we have $\rho=1, \mu=1$. In this case the solution is known to be:
-
-$u(y, t)=y - \frac{1}{\pi}\sum\limits^\infty_{n=1}\frac{1}{n}e^{-n^2\pi^2}\sin\left(1-y\right).$
-
-Let us try to recover the analytical solution using pyclsm's fluid Navier-Stokes solver.
-
-##### Domain and Boundary Conditions
-
-First we need to create a domain to solve the problem in. Since `pyclsm` uses the `dolfinx` package to solve PDE's this must be in the form of a `dolfinx.mesh.Mesh` object. The `common` module provides some functions to create simple rectangular meshes. The following creates a mesh of $[0, 1] \times [0, 1]$ with square finite elements.
-
-```
-from common import unit_square
-mesh_spacing = 0.05
-mesh = unit_square(mesh_spacing)
-```
-
-The `mesh_spacing` parameter controls the spacing between elements ($h$ or $\Delta x$) meaning we will find the solution on a $20\times20$ grid. Next we can create the fluid solver.
-
-```
-from navierstokes import IncompressibleNavierStokesSolver
-time_step = 0.0005
-solver = IncompressibleNavierStokesSolver(mesh, time_step)
-solver.set_density_as_const(1)
-solver.set_viscosity_as_const(1)
-```
-
-We must pass both the mesh and the time step we wish to use ($k$ or $\Delta t$). We also tell the solver to set $\rho=1$ and $\mu=1$ over the entire domain as on creation they will be zero everywhere. Next we can set all our boundary conditions.
-
-```
-from common import x_equals, y_equals
-solver.set_velocity_bc(y_equals(0), (0, 0))
-solver.set_velocity_bc(y_equals(1), (1, 0))
-solver.set_y_velocity(x_equals(0), 0)
-solver.set_y_velocity(x_equals(1), 0)
-```
-
-Each of the previous methods takes two arguments: a function which when given an array of the mesh points returns an array of booleans which are `True` corresponding to mesh points where the boundary condition is to be set. The common module provides some useful functions that can be used here for rectangular domains. The second arguments are the value of the solution on that particular boundary. In the above code it appears as if we have not done anything about the boundary condition in which $\frac{∂ u}{∂ x}=0$. However, by default the solver assumes that *any boundaries that do not have Dirichlet boundary conditions have natural boundary conditions on velocity*. That is $∇\mathbf{u}\cdot\mathbf{n}=0$ on those boundaries. In our problem since $v=0$ this condition reduces to $\frac{∂ u}{∂ x}=0$. Finally, now that we have dealt with all our boundary conditions, we can tell the solver we are ready to start solving the problem.
-
-```
-solver.reset()
-```
-
-Anytime the boundary conditions of the solver are changed the `reset` method must be called again.
-
-##### Time-steping and Visualisation
-
-To perform a single time step of the problem we can now call the `time_step` method of the fluid solver.
-
-```
-import math
-T = 0.5
-for _ in range(math.ceil(T / time_step)):
-    solver.time_step()
-```
-
-At anytime we can get the solver evaluate the finite element solution at any points in the domain.
-
-```
-import numpy as np 
-y = np.linspace(0, 1, 150)
-x = 0.5 * np.ones(150)
-u, v = solver.eval_velocity(x, y)
-```
-
-This allows us to visualise the solution with a plotting library of our choice. For example, with `matplotlib`.
-
-```
-import matplotlib.pyplot as plt 
-plt.plot(u, y)
-plt.show()
-```
-
-Now we can compare the numerical solution to the exact over time.
-
-<p align="center">
-    <img src="couette-tutorial.gif" width="500"  class="center"/>
-</p>
-
 ### Two-Phase Flow Solver
-
 #### Rising bubble
 
 To illustrate the use of `pyclsm`'s incompressible two-phase flow solver we consider simulating a circular bubble rising due to buoyancy.
@@ -201,4 +110,95 @@ plt.show()
 
 
 
+
+
+
+### Navier-Stokes Projection Solver
+
+#### Couette flow
+
+To demonstrate how to use the pyclsm's fluid solver we will consider the problem of 2D Couette flow. In Couette flow, viscous fluid occupies the space between two infinitely long surfaces, one of which moves tangentially relative to the other. We assume that the velocity ($\mathbf{u}=(u,v)$) is unidirectional so that $v=0$. Incompressiblity then implies that $\frac{∂ u}{∂ x} = 0$ or equivalently that $u$ only depends on $y$ and $t$.
+
+
+<p align="center">
+    <img src="couette.png" width="250" height="250"  class="center"/>
+</p>
+
+For simplicity, we will consider when the top surface is moving at a constant velocity of $1$ meter per second, the plates are $1$ meter apart and furthermore we have $\rho=1, \mu=1$. In this case the solution is known to be:
+
+$u(y, t)=y - \frac{1}{\pi}\sum\limits^\infty_{n=1}\frac{1}{n}e^{-n^2\pi^2t}\sin\left(n\pi(1-y)\right).$
+
+Let us try to recover the analytical solution using pyclsm's fluid Navier-Stokes solver.
+
+##### Domain and Boundary Conditions
+
+First we need to create a domain to solve the problem in. Since `pyclsm` uses the `dolfinx` package to solve PDE's this must be in the form of a `dolfinx.mesh.Mesh` object. The `common` module provides some functions to create simple rectangular meshes. The following creates a mesh of $[0, 1] \times [0, 1]$ with square finite elements.
+
+```
+from common import unit_square
+mesh_spacing = 0.05
+mesh = unit_square(mesh_spacing)
+```
+
+The `mesh_spacing` parameter controls the spacing between elements ($h$ or $\Delta x$) meaning we will find the solution on a $20\times20$ grid. Next we can create the fluid solver.
+
+```
+from navierstokes import IncompressibleNavierStokesSolver
+time_step = 0.0005
+solver = IncompressibleNavierStokesSolver(mesh, time_step)
+solver.set_density_as_const(1)
+solver.set_viscosity_as_const(1)
+```
+
+We must pass both the mesh and the time step we wish to use ($k$ or $\Delta t$). We also tell the solver to set $\rho=1$ and $\mu=1$ over the entire domain as on creation they will be zero everywhere. Next we can set all our boundary conditions.
+
+```
+from common import x_equals, y_equals
+solver.set_velocity_bc(y_equals(0), (0, 0))
+solver.set_velocity_bc(y_equals(1), (1, 0))
+solver.set_y_velocity(x_equals(0), 0)
+solver.set_y_velocity(x_equals(1), 0)
+```
+
+Each of the previous methods takes two arguments: a function which when given an array of the mesh points returns an array of booleans which are `True` corresponding to mesh points where the boundary condition is to be set. The common module provides some useful functions that can be used here for rectangular domains. The second arguments are the value of the solution on that particular boundary. In the above code it appears as if we have not done anything about the boundary condition in which $\frac{∂ u}{∂ x}=0$. However, by default the solver assumes that *any boundaries that do not have Dirichlet boundary conditions have natural boundary conditions on velocity*. That is $∇\mathbf{u}\cdot\mathbf{n}=0$ on those boundaries. In our problem since $v=0$ this condition reduces to $\frac{∂ u}{∂ x}=0$. Finally, now that we have dealt with all our boundary conditions, we can tell the solver we are ready to start solving the problem.
+
+```
+solver.reset()
+```
+
+Anytime the boundary conditions of the solver are changed the `reset` method must be called again.
+
+##### Time-steping and Visualisation
+
+To perform a single time step of the problem we can now call the `time_step` method of the fluid solver.
+
+```
+import math
+T = 0.5
+for _ in range(math.ceil(T / time_step)):
+    solver.time_step()
+```
+
+At anytime we can get the solver evaluate the finite element solution at any points in the domain.
+
+```
+import numpy as np 
+y = np.linspace(0, 1, 150)
+x = 0.5 * np.ones(150)
+u, v = solver.eval_velocity(x, y)
+```
+
+This allows us to visualise the solution with a plotting library of our choice. For example, with `matplotlib`.
+
+```
+import matplotlib.pyplot as plt 
+plt.plot(u, y)
+plt.show()
+```
+
+Now we can compare the numerical solution to the exact over time.
+
+<p align="center">
+    <img src="couette-tutorial.gif" width="500"  class="center"/>
+</p>
 
