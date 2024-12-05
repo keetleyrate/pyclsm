@@ -98,7 +98,7 @@ plt.show()
 ```
 
 <p align="center">
-    <img src="bubble-tutorial.gif" width="500"  class="center"/>
+    <img src="bubble-tutorial.gif"  class="center"/>
 </p>
 
 
