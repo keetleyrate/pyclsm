@@ -10,7 +10,7 @@ To illustrate the use of `pyclsm`'s incompressible two-phase flow solver we cons
 
 ##### Domain, Initial and Boundary Conditions 
 
-We will simulate a bubble contained in a $1$m $\times$ $2$m cavity with stationary boundaries. To create the mesh we can use the `rectangular_domain` function from the `common` modlue.
+We will simulate a bubble contained in a $1$ m $\times$ $2$ m cavity with stationary boundaries. To create the mesh we can use the `rectangular_domain` function from the `common` modlue.
 
 ```
 from common import rectangular_domain
@@ -18,7 +18,7 @@ mesh_spacing = 0.05
 mesh = rectangular_domain(mesh_spacing, (0, 0), (1, 2))
 ```
 
-Next we can create the solver. On the creation of the Two-Phase solver we must set the densities and viscosities of each phase \(\rho_0, \rho_1, \mu_0, \mu_1\), as well as surface tension \(σ\) and acceleration due to gravity.
+Next we can create the solver. On the creation of the Two-Phase solver we must set the densities and viscosities of each phase $\rho_0, \rho_1, \mu_0, \mu_1$, as well as surface tension $\sigma$ and acceleration due to gravity.
 
 ```
 from twophase import IncompressibleTwoPhaseFlowSolver
@@ -40,13 +40,13 @@ solver = IncompressibleTwoPhaseFlowSolver(
 
 Here we set the `kinematic` flag to `True` because $\mathbf{u}\cdot\mathbf{n}=0$ (sometimes called the kinematic boundary condition) hold on all the boundaries in our problem.
 
-Next we will set the initial condition on the level set function \(\phi\). This sets the initial position of each phase. In areas where \(\phi=0\) we will have \(\rho=\rho_0, \mu=\mu_0\) and similarly where \(\phi=1\) we will have \(\rho=\rho_1, \mu=\mu_1\). To set the initial state of \(\phi\) we must interpolate the directed values into `solver.level_set.phi` which is a `dolfinx.fem.Function`. The solver class has some methods that will do this for basic shapes such as circle, ellipses and boxes.
+Next we will set the initial condition on the level set function $\phi$. This sets the initial position of each phase. In areas where \(\phi=0\) we will have $\rho=\rho_0, \mu=\mu_0$ and similarly where \(\phi=1\) we will have $\rho=\rho_1, \mu=\mu_1$. To set the initial state of \(\phi\) we must interpolate the directed values into `solver.level_set.phi` which is a `dolfinx.fem.Function`. The solver class has some methods that will do this for basic shapes such as circle, ellipses and boxes.
 
 ```
 solver.set_phi_as_circle((0.5, 0.5), 0.25)
 ```
 
-We will use the *no-slip* conditions on all the stationary walls, i.e. \(\mathbf{u}=\mathbf{0}\). Since this is a commonly used boundary condition the solver has a method that will set it for us.
+We will use the *no-slip* conditions on all the stationary walls, i.e. $\mathbf{u}=\mathbf{0}$. Since this is a commonly used boundary condition the solver has a method that will set it for us.
 
 ```
 solver.set_no_slip_everywhere()
