@@ -5,7 +5,7 @@ import ufl
 import mpi4py
 import matplotlib.pyplot as plt
 
-from visualise import *
+from common.visualize import *
 
 class EllipticProjector:
 

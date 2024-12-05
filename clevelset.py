@@ -5,12 +5,20 @@ from ufl import inner, dx, grad
 from normal import NormalProjector
 from ellipticproject import EllipticProjector
 from scipy.integrate import simpson
+import numpy as np
 
 def circular_level_set(cx, cy, r, eps):
     def phi(w):
         x, y = w[0], w[1]
         dist = np.sqrt((x - cx)**2 + (y - cy)**2)
         return 1 / (1 + np.exp((dist - r)/eps))
+    return phi
+
+def ellipse_level_set(cx, cy, a, b, eps):
+    def phi(w):
+        x, y = w[0], w[1]
+        dist = np.sqrt(((x - cx)/a)**2 + ((y - cy)/b)**2)
+        return 1 / (1 + np.exp((dist - 1)/eps))
     return phi
 
 def phi(x, a, eps):
@@ -33,14 +41,13 @@ def line_phi(u, v, eps):
 
 class ConservativeLevelSet:
 
-    def __init__(self, mesh, h, dt, phi0, p=1, d=0.1, tol=1, c_normal=2, c_kappa=1, max_reinit_iters=1000) -> None:
+    def __init__(self, mesh, h, dt, p=1, d=0.1, tol=1, c_normal=2, c_kappa=1, max_reinit_iters=1000) -> None:
         V_phi = dolfinx.fem.functionspace(mesh, ("CG", p))
         V_n = dolfinx.fem.VectorFunctionSpace(mesh, ("P", p))
         self.psi = ufl.TestFunction(V_phi)
         self.phi_t = ufl.TrialFunction(V_phi)
         self.phi = dolfinx.fem.Function(V_phi)
         self.n = dolfinx.fem.Function(V_n)
-        self.phi.interpolate(phi0)
         self.h = h
         self.dt = dt
         self.dtau = h**(1 + d) / 2
@@ -112,61 +119,61 @@ class ConservativeLevelSet:
     
 
 
-from mesh2d import rectangle
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotx
-from visualise import *
-from common import *
-plt.style.use(matplotx.styles.ayu["dark"])
+# from mesh2d import rectangle
+# import numpy as np
+# import matplotlib.pyplot as plt
+# import matplotx
+# from visualise import *
+# from common import *
+# plt.style.use(matplotx.styles.ayu["dark"])
 
-def constant_test():
-    hs = []
-    es = []
-    for n in [2, 4, 8, 16, 32]:
-        h = 1 / n
-        mesh, _ = rectangle((0, -0.5), (2, 0.5), h)
-        V_u = dolfinx.fem.VectorFunctionSpace(mesh, ("P", 2))
-        u = dolfinx.fem.Function(V_u)
-        u.interpolate(constant((1, 0), mesh, V_u))
-        d = 0.1
-        solver = ConservativeLevelSet(mesh, h, h / 10, circular_level_set(0.5, 0, 0.25, h**(1 - d) / 2), tol=1, p=1)
-        T = 1
-        step_until(T, solver, lambda s: s.transport(u))
+# def constant_test():
+#     hs = []
+#     es = []
+#     for n in [2, 4, 8, 16, 32]:
+#         h = 1 / n
+#         mesh, _ = rectangle((0, -0.5), (2, 0.5), h)
+#         V_u = dolfinx.fem.VectorFunctionSpace(mesh, ("P", 2))
+#         u = dolfinx.fem.Function(V_u)
+#         u.interpolate(constant((1, 0), mesh, V_u))
+#         d = 0.1
+#         solver = ConservativeLevelSet(mesh, h, h / 10, circular_level_set(0.5, 0, 0.25, h**(1 - d) / 2), tol=1, p=1)
+#         T = 1
+#         step_until(T, solver, lambda s: s.transport(u))
 
-        phi_exact = dolfinx.fem.Function(dolfinx.fem.functionspace(mesh, ("P", 1)))
-        phi_exact.interpolate(circular_level_set(1.5, 0, 0.25, h**(1 - d) / 2))
+#         phi_exact = dolfinx.fem.Function(dolfinx.fem.functionspace(mesh, ("P", 1)))
+#         phi_exact.interpolate(circular_level_set(1.5, 0, 0.25, h**(1 - d) / 2))
 
-        error = ufl.sqrt(ufl.inner(solver.phi - phi_exact, solver.phi - phi_exact)) * ufl.dx
-        es.append(dolfinx.fem.assemble_scalar(dolfinx.fem.form(error)))
-        hs.append(h)
+#         error = ufl.sqrt(ufl.inner(solver.phi - phi_exact, solver.phi - phi_exact)) * ufl.dx
+#         es.append(dolfinx.fem.assemble_scalar(dolfinx.fem.form(error)))
+#         hs.append(h)
 
-    h = np.array(hs)
-    e = np.array(es)
+#     h = np.array(hs)
+#     e = np.array(es)
 
-    logh = np.log2(h)
-    loge = np.log2(e)
+#     logh = np.log2(h)
+#     loge = np.log2(e)
 
-    a, _ = np.polyfit(logh, loge, deg=1)
-    print("Convergence: ", a)
+#     a, _ = np.polyfit(logh, loge, deg=1)
+#     print("Convergence: ", a)
 
 
-def curvature_test():
-    def kappa_error(h):
-        mesh, tree = rectangle((-1, -1), (1, 1), h)
-        V_u = dolfinx.fem.VectorFunctionSpace(mesh, ("P", 2))
-        u = dolfinx.fem.Function(V_u)
-        u.interpolate(lambda x: (-2 * np.pi * x[1], 2 * np.pi * x[0]))
-        d = 0.1
-        r = 0.25
-        solver = ConservativeLevelSet(mesh, h, h / 25, circular_level_set(0.5, 0, r, h**(1 - d) / 2), tol=1, p=1, c_normal=10, c_kappa=20)
-        T = 1
-        step_until(T, solver, lambda s: s.transport(u))
-        theta = np.linspace(0, 2 * np.pi, 600)
-        kappa_h = solver.compute_curvature()
-        x, y, kappa_circle = fem_scalar_func_at_given_points(kappa_h, mesh, tree, 0.5 + r * np.cos(theta), r * np.sin(theta))
-        kappa_e = np.sqrt(simpson(np.square(kappa_circle.reshape((600,)) - 1 / r), theta))
-        return kappa_e
-    compute_convergence(kappa_error, [2, 6, 10, 14, 18, 22])
+# def curvature_test():
+#     def kappa_error(h):
+#         mesh, tree = rectangle((-1, -1), (1, 1), h)
+#         V_u = dolfinx.fem.VectorFunctionSpace(mesh, ("P", 2))
+#         u = dolfinx.fem.Function(V_u)
+#         u.interpolate(lambda x: (-2 * np.pi * x[1], 2 * np.pi * x[0]))
+#         d = 0.1
+#         r = 0.25
+#         solver = ConservativeLevelSet(mesh, h, h / 25, circular_level_set(0.5, 0, r, h**(1 - d) / 2), tol=1, p=1, c_normal=10, c_kappa=20)
+#         T = 1
+#         step_until(T, solver, lambda s: s.transport(u))
+#         theta = np.linspace(0, 2 * np.pi, 600)
+#         kappa_h = solver.compute_curvature()
+#         x, y, kappa_circle = fem_scalar_func_at_given_points(kappa_h, mesh, tree, 0.5 + r * np.cos(theta), r * np.sin(theta))
+#         kappa_e = np.sqrt(simpson(np.square(kappa_circle.reshape((600,)) - 1 / r), theta))
+#         return kappa_e
+#     compute_convergence(kappa_error, [2, 6, 10, 14, 18, 22])
 
 

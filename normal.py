@@ -7,8 +7,7 @@ import ufl
 import mpi4py
 import matplotlib.pyplot as plt
 import numpy as np
-from visualise import *
-from common import *
+from common.visualize import *
 
 class NormalProjector:
 

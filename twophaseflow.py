@@ -1,295 +1,115 @@
-
-from navierstokes import NSSolver
-from levelset import LevelSetSolver, make_marker_function
-from visualise import *
-from dolfinx import geometry, fem
-from dolfinx.mesh import exterior_facet_indices
-import ufl
-import math
-import matplotlib.pyplot as plt
-from bc import *
+from clevelset import ConservativeLevelSet, circular_level_set, box_phi
+from navierstokes import IncompressibleNavierStokesSolver
+from common.bc import *
+from common.common import *
 import pathlib
-from mpi4py import MPI
 import csv
-import shutil
+import ufl
+import dolfinx
 
-class TwoPhaseFlowSolver:
+class IncompressibleTwoPhaseFlowSolver(IncompressibleNavierStokesSolver):
 
-    def __init__(self, mesh, dx, dt, rho1, rho2, mu1, mu2, sigma, initial_phi_args, xbounds, ybounds, g=0, reinit_tol=1e-4, output=False, d=0.1, kinematic=False, adaptive_time_step=False, level_set_order=1) -> None:
+    def __init__(self, mesh, h, dt, rho0, rho1, mu0, mu1, sigma, g, p_phi=1, d=0.05, kinematic=True, c_kappa=2, c_normal=0.1) -> None:
+        super().__init__(mesh, dt, kinematic=kinematic)
         self.mesh = mesh
-        self.tree = geometry.bb_tree(mesh, 2)
-        self.xbounds = xbounds
-        self.ybounds = ybounds
-        self.adaptive_time_step = adaptive_time_step
+        self.level_set = ConservativeLevelSet(mesh, h, dt, p=p_phi, d=d, c_kappa=c_kappa, c_normal=c_normal)
+        self.rho0 = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(rho0))
+        self.rho1 = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(rho1))
+        self.mu0 = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(mu0))
+        self.mu1 = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(mu1))
+        self.has_surface_tension = sigma > 0
+        self.sigma = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(sigma))
+        self.g = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type((0, -g)))
+        self.step_proc = None
+
+    def set_phi_as_circle(self, center, radius):
+        phi_c = circular_level_set(*center, radius, self.level_set.eps)
+        self.level_set.phi.interpolate(phi_c)
+
+
+    def set_dencity(self):
+        self.rho_prev.x.array[:] = self.rho.x.array[:] 
+        rho = dolfinx.fem.Expression(
+            self.rho0 + (self.rho1 - self.rho0) * self.level_set.phi, self.density_space.element.interpolation_points()
+        )
+        self.rho.interpolate(rho)
+      
+
+    def set_viscosity(self):
+        mu = dolfinx.fem.Expression(
+            self.mu0 + (self.mu1 - self.mu0) * self.level_set.phi, self.density_space.element.interpolation_points()
+        )
+        self.mu.interpolate(mu)
+
+    def set_body_forces(self):
+        if self.has_surface_tension:
+            kappa = self.level_set.compute_curvature()
+            grad_phi = self.level_set.normal_projector.nabla_f
+            self.F.interpolate(
+                dolfinx.fem.Expression(
+                    self.rho * self.g + self.sigma * kappa * grad_phi,
+                    self.F_space.element.interpolation_points()
+                )
+            )
+        else:
+            self.F.interpolate(
+                dolfinx.fem.Expression(
+                    self.rho * self.g,
+                    self.F_space.element.interpolation_points()
+                )
+            )
+
     
-
-        # Conditons on interface thickness based on mesh size
-        epsilon = dx**(1 - d) / 2
-        self.eps = epsilon
-        self.dx = dx
-        dtau = dx**(1 + d) / 2
- 
-
-        # Required function spaces for each solver
-        self.phi_space = fem.FunctionSpace(mesh, ("CG", level_set_order))
-        self.normal_space = fem.FunctionSpace(mesh, ufl.VectorElement("CG", mesh.ufl_cell(), level_set_order))
-        self.velocity_space = fem.FunctionSpace(mesh, ufl.VectorElement("CG", mesh.ufl_cell(), 2))
-        self.pressure_space = fem.FunctionSpace(mesh, ("CG", 1))
-        self.density_space = fem.FunctionSpace(mesh, ("CG", 1))
-
-        self.fluid_solver = NSSolver(mesh, dt, self.velocity_space, self.pressure_space, self.density_space, kinematic)
-        self.level_set_solver = LevelSetSolver(mesh, make_marker_function(*initial_phi_args, epsilon), dx, dt, dtau, epsilon, self.phi_space, self.normal_space, self.velocity_space, dtau * reinit_tol, output)
-        self.dt = dt
-        self.t = 0
-        self.plotting_args = self.mesh, self.tree, self.xbounds, self.ybounds
-        self.g = 0
-        self.u = fem.Function(self.density_space)
-        self.v = fem.Function(self.density_space)
-
-        self.rho1 = fem.Constant(mesh, default_scalar_type(rho1))
-        self.rho2 = fem.Constant(mesh, default_scalar_type(rho2))
-        self.mu1 = fem.Constant(mesh, default_scalar_type(mu1))
-        self.mu2 = fem.Constant(mesh, default_scalar_type(mu2))
-        self.sigma = fem.Constant(mesh, default_scalar_type(sigma))
-        self.g = fem.Constant(mesh, default_scalar_type((0, -g)))
-        self.surf_ten = fem.Function(self.velocity_space)
-
-    def compute_dencity(self):
-        # Move dencity from previous time step into rho^n
-        self.fluid_solver.rho_prev.x.array[:] = self.fluid_solver.rho.x.array[:] 
-        # Compute new density using phi
-        rho = fem.Expression(self.rho1 + (self.rho2 - self.rho1) * self.level_set_solver.phi, self.density_space.element.interpolation_points())
-        self.fluid_solver.rho.interpolate(rho)
-
-    def compute_viscosity(self):
-        # Compute new viscosity using phi
-        mu = fem.Expression(self.mu1 + (self.mu2 - self.mu1) * self.level_set_solver.phi, self.density_space.element.interpolation_points())
-        self.fluid_solver.mu.interpolate(mu)
-
-    def compute_surface_tension(self):
-        self.level_set_solver.compute_curvature()
-        surf_ten =  self.level_set_solver.kappa * self.level_set_solver.curvature_solver.grad
-        self.surf_ten.interpolate(fem.Expression(surf_ten, self.velocity_space.element.interpolation_points()))
-    
-    def compute_forces(self):
-        F = fem.Expression(self.fluid_solver.rho * self.g + self.sigma * self.surf_ten, self.fluid_solver.F_space.element.interpolation_points())
-        self.fluid_solver.F.interpolate(F)
-    
-
     def time_step(self, steps=1):
         for _ in range(steps):
-            # Update the advection problem
-            self.level_set_solver.set_velosity(self.fluid_solver.u.x.array[:])
-             # Advect interface
-            self.level_set_solver.advection_step()
-            # Solve for fluid
-            self.compute_dencity()
-            self.compute_viscosity()
-            self.compute_surface_tension()
-            self.compute_forces()
-            self.fluid_solver.reset()
-            self.fluid_solver.time_step()
-            if self.adaptive_time_step:
-                self.update_dt()
-            self.t += self.dt
-            self.level_set_solver.t = self.t
-
-    def reinitialise(self):
-        self.level_set_solver.reinitalise()
-
-    def to_steady_state(self, tol, max_iters=1000):
-        for _ in range(max_iters):
-            last = self.level_set_solver.phi.x.array.copy()
-            self.time_step()
-            if (res := np.linalg.norm(self.level_set_solver.phi.x.array - last) > tol):
-                print(f"res: {res:.4e}")
-            else:
-                break
+            self.level_set.transport(self.u)
+            self.set_dencity()
+            self.set_viscosity()
+            self.set_body_forces()
+            self.reset()
+            self.compute_u()
 
 
+    def eval_level_set(self, x, y, force=False):
+        return fem_scalar_func_at_given_points(self.level_set.phi, self.mesh, self.tree, x, y, forse_eval=force)[-1]
     
-    def set_u_bc(self, geom_fn, fn):
-        self.fluid_solver.set_velosity_bc(geom_fn, fn)
+    def velocity_magniute(self):
+        mags = dolfinx.fem.Function(self.density_space)
+        mags.interpolate(
+            dolfinx.fem.Expression(
+                ufl.sqrt(self.u[0]**2 + self.u[1]**2),
+                self.density_space.element.interpolation_points()
+            )
+        )
+        return mags
 
-    def set_p_bc(self, geom_fn, fn):
-        self.fluid_solver.set_pressure_bc(geom_fn, fn)
 
-    def set_x_velocity(self, geometry_fn, fn):
-        self.fluid_solver.set_x_velocity(geometry_fn, fn)
-    
-    def set_y_velocity(self, geometry_fn, fn):
-        self.fluid_solver.set_y_velocity(geometry_fn, fn)
+    def compute_u(self):
+        super().time_step()
 
     def set_no_slip_everywhere(self):
-        tdim = self.mesh.topology.dim
-        fdim = tdim - 1
-        self.mesh.topology.create_connectivity(fdim, tdim)
-        boundary_facets = exterior_facet_indices(self.mesh.topology)
-        boundary_dofs = fem.locate_dofs_topological(self.velocity_space, fdim, boundary_facets)
+        self.u_bcs.append(create_no_slip_bc(self.mesh, self.velocity_space))
 
-        no_slip = fem.Function(self.velocity_space)
-        no_slip.interpolate(constant((0, 0), self.mesh, self.velocity_space))
-
-        bc = fem.dirichletbc(no_slip, boundary_dofs)
-        self.fluid_solver.u_bcs.append(bc)
-
-
-
-
-    def compute_area(self):
-        I = fem.form(self.level_set_solver.phi * ufl.dx)
-        area = fem.assemble_scalar(I)
-        return area
-    
-    def compute_perimeter(self):
-        self.level_set_solver.compute_curvature()
-        k = self.level_set_solver.kappa
-        phi = self.level_set_solver.phi
-        I = fem.form(k * phi * ufl.dx)
-        return fem.assemble_scalar(I)
-    
-    def com(self):
-        x = ufl.SpatialCoordinate(self.mesh)
-        phi = self.level_set_solver.phi
-        com_x = fem.form(x[0] * phi * ufl.dx)
-        com_y = fem.form(x[1] * phi * ufl.dx)
-        dem = fem.form(phi * ufl.dx)
-        return fem.assemble_scalar(com_x) / fem.assemble_scalar(dem), fem.assemble_scalar(com_y) / fem.assemble_scalar(dem)
-
-    def average_velosity(self):
-        phi = self.level_set_solver.phi
-        u = self.fluid_solver.u
-        U_x = fem.form(u[0] * phi * ufl.dx)
-        U_y = fem.form(u[1] * phi * ufl.dx)
-        dem = fem.form(phi * ufl.dx)
-        return fem.assemble_scalar(U_x) / fem.assemble_scalar(dem), fem.assemble_scalar(U_y) / fem.assemble_scalar(dem)
-    
-    def circularity(self):
-        self.level_set_solver.compute_curvature()
-        phi = self.level_set_solver.phi
-        kappa = self.level_set_solver.kappa
-        num = fem.form(4 * np.pi * phi * ufl.dx)
-        dem = fem.form(phi * kappa * ufl.dx)
-        return np.sqrt(fem.assemble_scalar(num)) / fem.assemble_scalar(dem)
-
-
-    def plot_fluid(self, axes, n_points, forse_eval=False, scale=None, sigmoid=False):
-        x, y, u, v = fem_vector_func_at_points(self.fluid_solver.u, *self.plotting_args, n_points, forse_eval=forse_eval)
-        lengths = np.sqrt(np.square(u) + np.square(v))
-        max_abs = np.max(lengths)
-        c = np.array(list(map(plt.cm.viridis, lengths.flatten() / max_abs)))
-        if sigmoid:
-            u = np.tanh(u)
-            v = np.tanh(v)
-        axes.quiver(x, y, u, v, color=c, scale=scale)
-
-    def plot_phi(self, axes, n_points, threshold=False, forse_eval=False):
-        _, _, phi = fem_scalar_func_at_points(self.level_set_solver.phi, *self.plotting_args, n_points, forse_eval=forse_eval)
-        if threshold:
-            inside = phi >= 0.5
-            phi[inside] = np.ones(phi[inside].shape)
-            phi[np.logical_not(inside)] = np.zeros(phi[np.logical_not(inside)].shape)
-        axes.imshow(np.transpose(np.flip(phi, 1)), extent=[self.xbounds[0], self.xbounds[1], self.ybounds[0], self.ybounds[1]])
-
-    def plot_interface(self, axes, n_points, forse_eval=False, colors=None, width=None):
-        x, y, phi = fem_scalar_func_at_points(self.level_set_solver.phi, *self.plotting_args, n_points, forse_eval=forse_eval)
-       #axes.contour(x, y, phi, levels=[0.1, 0.5, 0.9])
-        axes.contour(x, y, phi, levels=[0.5], colors=colors, linewidths=width)
-
-    def plot_interface_normals(self, axes, n_vectors):
-        x, y, u, v = fem_vector_func_at_points(self.level_set_solver.n, *self.plotting_args, n_vectors)
-        axes.quiver(x, y, u, v, color="cadetblue")
-
-    def plot_F(self, axes, n_vectors):
-        x, y, u, v = fem_vector_func_at_points(self.fluid_solver.F, *self.plotting_args, n_vectors)
-        axes.quiver(x, y, u, v, color="cadetblue")
-
-    def plot_Fs(self, axes, n_vectors):
-        x, y, u, v = fem_vector_func_at_points(self.surf_ten, *self.plotting_args, n_vectors)
-        axes.quiver(x, y, u, v, color="cadetblue")
-
-    def plot_phi_grad(self, axes, n_vectors):
-        x, y, u, v = fem_vector_func_at_points(self.level_set_solver.curvature_solver.grad, *self.plotting_args, n_vectors)
-        axes.quiver(x, y, u, v, color="cadetblue")
-
-
-    def plot_density(self, fig, axes, n_points):
-        #self.fluid_solver.compute_dencity(self.level_set_solver.phi)
-        x, y, rho = fem_scalar_func_at_points(self.fluid_solver.rho, *self.plotting_args, n_points)
-        cts = axes.imshow(np.transpose(np.flip(rho, 1)), extent=[self.xbounds[0], self.xbounds[1], self.ybounds[0], self.ybounds[1]])
-        cbar = fig.colorbar(cts)
-        cbar.set_label(r"$\rho(x)$")
-
-    def plot_viscosity(self, fig, axes, n_points, forse_eval=False):
-        #self.fluid_solver.compute_dencity(self.level_set_solver.phi)
-        x, y, rho = fem_scalar_func_at_points(self.fluid_solver.mu, *self.plotting_args, n_points, forse_eval=forse_eval)
-        cts = axes.imshow(np.transpose(np.flip(rho, 1)), extent=[self.xbounds[0], self.xbounds[1], self.ybounds[0], self.ybounds[1]])
-        cbar = fig.colorbar(cts)
-        cbar.set_label(r"$\rho(x)$")
-
-    def plot_curvature(self, fig, axes, n_points):
-        #self.fluid_solver.compute_dencity(self.level_set_solver.phi)
-        x, y, rho = fem_scalar_func_at_points(self.level_set_solver.kappa, *self.plotting_args, n_points)
-        cts = axes.imshow(np.transpose(np.flip(rho, 1)), extent=[self.xbounds[0], self.xbounds[1], self.ybounds[0], self.ybounds[1]])
-        cbar = fig.colorbar(cts)
-        cbar.set_label(r"$\kappa(x)$")
-
-    def fluid_mags_as_function(self):
-        u = self.fluid_solver.u
-        length = fem.Function(self.pressure_space)
-        length.interpolate(fem.Expression(ufl.sqrt(u[0]**2 + u[1]**2), self.pressure_space.element.interpolation_points()))
-        return length
-
-
-
-    def save_flow_attributes(self, T, filename):
-        # t, A, C, x_com, y_com, Ux, Uy
-        with open(filename, "w") as outfile:
-            for _ in range(math.ceil(T / self.dt)):
-                A = self.compute_area()
-                C = self.circularity()
-                com = self.com()
-                U = self.average_velosity()
-                outfile.write(f",".join(list(map(str, [self.t, A, C, *com, *U]))) + "\n")
-                self.time_step()
-    
     def save_to_files(self, foldername, T, steps=1):
         results_folder = pathlib.Path(foldername)
         results_folder.mkdir(exist_ok=True, parents=True)
 
-        phi_file = open(foldername + "/phi.csv", "w")
-        phi_writer = csv.writer(phi_file)
-        u_file = open(foldername + "/u.csv", "w")
-        u_writer = csv.writer(u_file)
+        self.phi_file = open(foldername + "/phi.csv", "w")
+        phi_writer = csv.writer(self.phi_file)
+        self.u_file = open(foldername + "/u.csv", "w")
+        u_writer = csv.writer(self.u_file)
 
-        for _ in range(math.ceil(T / self.dt / steps)):
+        for _ in tqdm(range(math.ceil(T / self.dt / steps))):
             t = str(self.t)
-            phi = list(np.array(self.level_set_solver.phi.x.array.copy(), dtype=np.float32))
-            kappa = list(np.array(self.level_set_solver.kappa.x.array.copy(), dtype=np.float32))
-            u = list(np.array(self.fluid_solver.u.x.array.copy(), dtype=np.float32))
-            p = list(np.array(self.fluid_solver.p.x.array.copy(), dtype=np.float32))
+            phi = list(np.array(self.level_set.phi.x.array.copy(), dtype=np.float32))
+            u = list(np.array(self.u.x.array.copy(), dtype=np.float32))
             phi.append(t)
-            kappa.append(t)
             u.append(t)
-            p.append(t)
             phi_writer.writerow(phi)
             u_writer.writerow(u)
             self.time_step(steps)
-
-        phi_file.close()
-        u_file.close()
-        shutil.make_archive(foldername, "zip", foldername)
-
-
-    def load_time_step(self, T):
-        for phi_row, u_row, in zip(self.phi_reader, self.u_reader):
-            t = float(phi_row[-1])
-            if t >= T:
-                self.level_set_solver.phi.x.array[:] = np.array(phi_row[:-1])
-                self.fluid_solver.u.x.array[:] = np.array(u_row[:-1])
-                return
-        self.level_set_solver.phi.x.array[:] = np.array(phi_row[:-1])
-        self.fluid_solver.u.x.array[:] = np.array(u_row[:-1])
+        self.phi_file.close()
+        self.u_file.close()
 
     def read_files(self, foldername):
         self.phi_file = open(foldername + "/phi.csv")
@@ -302,5 +122,67 @@ class TwoPhaseFlowSolver:
         self.u_file.close()
 
 
+# from common import *
+# import numpy as np
+# import matplotlib.pyplot as plt
+# import matplotx
+# import mpi4py
+# from visualise import *
+# from common import *
+# from scipy.integrate import simpson
 
+# def couette_flow_test():
+#     def compute_error(h):
+#         n = math.ceil(1 / h)
+#         mesh = dolfinx.mesh.create_unit_square(mpi4py.MPI.COMM_WORLD, n, n, cell_type=dolfinx.mesh.CellType.quadrilateral)
+#         solver = IncompressibleTwoPhaseFlowSolver(mesh, h, h / 500, 1, 1, 1, 1, 0, 0, circular_level_set(0, 0, 0, 0))
+#         exact = dolfinx.fem.Function(solver.velosity_space)
+#         exact.interpolate(lambda x: (1/2 * x[1] * (1 - x[1]), 0 * x[0]))
+#         solver.set_velosity_bc(y_equals(1), constant((1, 0), mesh, solver.velosity_space))
+#         solver.set_velosity_bc(y_equals(0), constant((0, 0), mesh, solver.velosity_space))
+#         solver.set_y_velocity(x_equals(0), dolfinx.default_scalar_type(0))
+#         solver.set_y_velocity(x_equals(1), dolfinx.default_scalar_type(0))
+#         solver.reset()
+#         T = 0.1
+#         step_until(T, solver, lambda s: s.time_step())
+#         y = np.linspace(0, 1, 250)
+#         x = np.full(250, 0.5)
+#         x, y, u, _ = fem_vector_func_at_given_points(solver.u, mesh, dolfinx.geometry.bb_tree(mesh, 2), x, y)
+#         u_e = y - 2 / np.pi * sum(1/n * np.exp(-n**2*np.pi**2*T) * np.sin(n*np.pi*(1 - y)) for n in range(1, 100))
+#         return simpson(y=np.abs(u - u_e), x=y)
+#     compute_convergence(compute_error, 4)
+
+# def shear_test():
+#     n = 32
+#     h = 1 / n
+#     mesh = dolfinx.mesh.create_unit_square(mpi4py.MPI.COMM_WORLD, n, n, cell_type=dolfinx.mesh.CellType.quadrilateral)
+#     d = 0.1
+#     solver = IncompressibleTwoPhaseFlowSolver(mesh, h, h / 10, 2, 1, 2, 1, 0.1, 0, circular_level_set(0.5, 0.5, 0.15, h ** (1 - d) / 2), )
+#     solver.set_velosity_bc(y_equals(1), constant((1, 0), mesh, solver.velosity_space))
+#     solver.set_velosity_bc(y_equals(0), constant((-1, 0), mesh, solver.velosity_space))
+#     solver.set_y_velocity(x_equals(0), dolfinx.default_scalar_type(0))
+#     solver.set_y_velocity(x_equals(1), dolfinx.default_scalar_type(0))
+#     solver.save_to_files("sols/shear", 3, steps=5)
+#     plotter = Plotter(solver, (0, 1), (0, 1), 0.1, density_points=200, levels=100, interface_points=0, filename="sols/shear")
+#     plotter.save_to_mp4("videos/shear.mp4")
+
+   
+# from mesh2d import rectangle
+
+# def surface_tension():
+#     n = 16
+#     h = 1 / n
+#     mesh, tree = rectangle((0, 0), (2, 2), h)
+#     #mesh = dolfinx.mesh.create_unit_square(mpi4py.MPI.COMM_WORLD, n, n, cell_type=dolfinx.mesh.CellType.quadrilateral)
+
+#     solver = IncompressibleTwoPhaseFlowSolver(mesh, h, h / 10, 0.1, 1, 0.1, 1, 10, 0, circular_level_set(0, 0, 0.2, 0.1), d=0.05)
+#     solver.set_no_slip_everywhere()
+#     solver.level_set.phi.interpolate(box_phi(0.5, 0.5, 1.5, 1.5, solver.level_set.eps))
+#     plotter = Plotter(solver, (0, 2), (0, 2), 0.1, contor_color="white", filename="sols/tens")
+#     # solver.time_step()
+#     # plotter.plot_from_solver()
+#     # plotter.show()
+#     #solver.save_to_files("sols/tens", 2, steps=5)
+#     plotter.save_to_mp4("videos/tens.mp4")
+   
 
