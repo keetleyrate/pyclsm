@@ -103,12 +103,6 @@ axes.set_aspect("equal")
 plt.show()
 ```
 
-<<<<<<< HEAD
-<p align="center">
-    <img src="bubble-tutorial.gif"  class="center"/>
-</p>
-=======
->>>>>>> 7ec158e (update readme)
 
 
 
