@@ -3,7 +3,7 @@
 An implementation of a conservative level set method for two-phase flow simulations using the FEniCSx finite element library.
 
 <p align="center">
-    <img src="bubble-tutorial.gif" width="500"  class="center"/>
+    <img src="bubble-tutorial.gif"  class="center"/>
 </p>
 
 
