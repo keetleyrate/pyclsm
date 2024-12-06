@@ -1,6 +1,6 @@
 # pyclsm
 
-An implementation of a conservative level set method for two-phase flow simulations using the FEniCSx finite element library.
+An implementation of a conservative level set method for two-phase flow simulations based on the FEniCSx finite element library.
 
 <p align="center">
     <img src="bubble-tutorial.gif"  class="center"/>
@@ -8,13 +8,9 @@ An implementation of a conservative level set method for two-phase flow simulati
 
 
 ## Usage
-### Two-Phase Flow Solver
-#### Rising bubble
-
-
 To illustrate the use of `pyclsm`'s incompressible two-phase flow solver we consider simulating a circular bubble rising due to buoyancy.
 
-##### Domain, Initial and Boundary Conditions 
+### Domain, Initial and Boundary Conditions 
 
 We will simulate a bubble contained in a $1$ m $\times$ $2$ m cavity with stationary boundaries. To create the mesh we can use the `rectangular_domain` function from the `common` modlue.
 
@@ -58,7 +54,7 @@ We will use the *no-slip* conditions on all the stationary walls, i.e. $\mathbf{
 solver.set_no_slip_everywhere()
 ```
 
-##### Time-steping and Visualisation
+### Time-steping and Visualisation
 
 This solver is now ready to start performing time steps. To perform multiple steps we can use the optional `steps` parameter in the `time_step` method of the two-phase flow solver.
 
