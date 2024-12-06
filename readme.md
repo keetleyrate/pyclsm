@@ -46,7 +46,7 @@ solver = IncompressibleTwoPhaseFlowSolver(
 
 Here we set the `kinematic` flag to `True` because $\mathbf{u}\cdot\mathbf{n}=0$ (sometimes called the kinematic boundary condition) hold on all the boundaries in our problem.
 
-Next we will set the initial condition on the level set function $\phi$. This sets the initial position of each phase. In areas where \(\phi=0\) we will have $\rho=\rho_0, \mu=\mu_0$ and similarly where \(\phi=1\) we will have $\rho=\rho_1, \mu=\mu_1$. To set the initial state of \(\phi\) we must interpolate the directed values into `solver.level_set.phi` which is a `dolfinx.fem.Function`. The solver class has some methods that will do this for basic shapes such as circle, ellipses and boxes.
+Next we will set the initial condition on the level set function $\phi$. This sets the initial position of each phase. In areas where $\phi=0$ we will have $\rho=\rho_0, \mu=\mu_0$ and similarly where $\phi=1$ we will have $\rho=\rho_1, \mu=\mu_1$. To set the initial state of $\phi$ we must interpolate the directed values into `solver.level_set.phi` which is a `dolfinx.fem.Function`. The solver class has some methods that will do this for basic shapes such as circle, ellipses and boxes.
 
 ```
 solver.set_phi_as_circle((0.5, 0.5), 0.25)
