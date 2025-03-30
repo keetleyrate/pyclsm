@@ -1,5 +1,5 @@
-from clevelset import ConservativeLevelSet, circular_level_set, box_phi
 from navierstokes import IncompressibleNavierStokesSolver
+from clevelset import ConservativeLevelSet, circular_level_set, box_phi
 from common.bc import *
 from common.common import *
 import pathlib

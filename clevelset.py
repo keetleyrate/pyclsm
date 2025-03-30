@@ -44,6 +44,7 @@ class ConservativeLevelSet:
     def __init__(self, mesh, h, dt, p=1, d=0.1, tol=1, c_normal=2, c_kappa=1, max_reinit_iters=1000) -> None:
         V_phi = dolfinx.fem.functionspace(mesh, ("CG", p))
         V_n = dolfinx.fem.VectorFunctionSpace(mesh, ("P", p))
+        self.V_n = V_n
         self.psi = ufl.TestFunction(V_phi)
         self.phi_t = ufl.TrialFunction(V_phi)
         self.phi = dolfinx.fem.Function(V_phi)
@@ -74,9 +75,12 @@ class ConservativeLevelSet:
     def advect(self):
         self.advection_solver.solve()
 
-    def prepare_reinit(self):
-        self.normal_projector.set_function(self.phi)
-        self.n = self.normal_projector.compute_normals()
+    def prepare_reinit(self, n=None):
+        if n is None:
+            self.normal_projector.set_function(self.phi)
+            self.n = self.normal_projector.compute_normals()
+        else:
+            self.n = n
         self.reinit_form = (
             inner(self.phi_t - self.phi, self.psi) * dx
             - self.dtau * (0.5*(self.phi + self.phi_t) - self.phi*self.phi_t) * inner(self.n, grad(self.psi)) * dx
