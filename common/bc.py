@@ -42,7 +42,7 @@ def any_of(pairs):
     return _any_of
 
 def constant(value, mesh, space):
-    return fem.Expression(fem.Constant(mesh, default_scalar_type(value)), space.element.interpolation_points())
+    return fem.Expression(fem.Constant(mesh, default_scalar_type(value)), space.element.interpolation_points)
 
 def axes_aligned_boundary(points: tuple[tuple]):
     p1, p2 = points

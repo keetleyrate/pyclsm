@@ -7,29 +7,34 @@ import matplotlib.pyplot as plt
 
 from common.visualize import *
 
+def create_test_and_trail_functions(solution_space: dolfinx.fem.FunctionSpace):
+    trail = ufl.TrialFunction(solution_space)
+    test = ufl.TestFunction(solution_space)
+    solution = dolfinx.fem.Function(solution_space)
+    return solution, trail, test
+
+
 class EllipticProjector:
 
-    def __init__(self, Vh, h, c_e) -> None:
-        self.f = dolfinx.fem.Function(Vh)
-        self.u_e = dolfinx.fem.Function(Vh)
-        self.u_trail = ufl.TrialFunction(Vh)
-        self.v = ufl.TestFunction(Vh)
-        self.c_e = c_e
-        self.h = h
+    def __init__(self, C) -> None:
+        self.C = C
+        self.bcs = []
 
-    def set_projected_function(self, f):
-        self.form = (ufl.inner(self.u_trail, self.v) + self.c_e * self.h * self.h * ufl.inner(ufl.grad(self.u_trail), ufl.grad(self.v)) - ufl.inner(f, self.v)) * ufl.dx
-        self.solver = dolfinx.fem.petsc.LinearProblem(
-            dolfinx.fem.form(ufl.lhs(self.form)),
-            dolfinx.fem.form(ufl.rhs(self.form)),
-            [],
-            self.u_e,
-            petsc_options={"ksp_type": "minres", "pc_type": "hypre"}
+    def build_problem(self, solution_space, to_project, h):
+        solution, trail, test = create_test_and_trail_functions(solution_space)
+        self.solution = solution
+        form = (ufl.inner(trail, test) + self.C * h * h * ufl.inner(ufl.grad(trail), ufl.grad(test)) - ufl.inner(to_project, test)) * ufl.dx
+        self.problem = dolfinx.fem.petsc.LinearProblem(
+            dolfinx.fem.form(ufl.lhs(form)),
+            dolfinx.fem.form(ufl.rhs(form)),
+            bcs=self.bcs,
+            u=self.solution,
+            petsc_options={"ksp_type": "minres", "pc_type": "hypre"},
+            petsc_options_prefix="elliptic_proj_"
         )
         
     def project(self):
-        self.solver.solve()
-        return self.u_e
+        self.problem.solve()
     
 
 def test():

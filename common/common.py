@@ -2,6 +2,7 @@ from tqdm import tqdm
 import math
 import dolfinx
 from dolfinx import mesh, geometry
+from dolfinx.geometry import bb_tree, compute_collisions_points, compute_colliding_cells
 import numpy as np
 from mpi4py import MPI
 
@@ -11,6 +12,13 @@ def step_until(T, solver, method):
 
 def constant(value, mesh, space):
     return dolfinx.fem.Expression(dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(value)), space.element.interpolation_points())
+
+def interpolate_expression(ufl_expression, function):
+    expr = dolfinx.fem.Expression(ufl_expression, function.function_space.element.interpolation_points)
+    num_cells = function.function_space.mesh.topology.index_map(function.function_space.mesh.topology.dim).size_local
+    cells = np.arange(num_cells, dtype=np.int32)
+    function.interpolate(expr, cells, cells) 
+
 
 
 
@@ -110,3 +118,14 @@ def fem_vector_func_at_given_points(u_func, mesh, tree, x, y, forse_eval=False):
     u = np.array(list(uv[0] for uv in uvs))
     v = np.array(list(uv[1] for uv in uvs))
     return x, y, u, v
+
+
+def interpolate_from_old_mesh(old_func: dolfinx.fem.Function, new_func: dolfinx.fem.Function, old_tree):
+    num_cells = new_func.function_space.mesh.topology.index_map(new_func.function_space.mesh.topology.dim).size_local
+    cells = np.arange(num_cells, dtype=np.int32)
+    new_func.interpolate_nonmatching(
+        old_func,
+        cells=cells,
+        interpolation_data=dolfinx.fem.create_interpolation_data(new_func.function_space, old_func.function_space, cells)
+    )
+    new_func.x.scatter_forward()
