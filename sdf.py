@@ -21,7 +21,7 @@ def signed_distance_to_zero_level_set(f, g, point):
             f_value
         ])
     x_star, y_star, _ = optimize.root(L, np.array([*point, 0])).x
-    return np.sign(f((x_star, y_star))) * math.dist(point, (x_star, y_star))
+    return np.sign(f(point)) * math.dist(point, (x_star, y_star))
 
     
 

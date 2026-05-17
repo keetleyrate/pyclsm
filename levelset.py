@@ -37,19 +37,24 @@ def create_spaces_and_functions(mesh, p):
 
 class ConservativeLevelSet:
 
-    def __init__(self, domain, h_min, dt, p=1, reinit_iters=7, solver_options=None | dict) -> None:
+
+    def __init__(self, domain, h_min, dt, dτ=0.05, p=1, c_kappa=2, reinit_tol=1e-5, sym_bcs=False, max_reinit_iters=10, solver_options=None | dict) -> None:
         self.p = p
         self.dt = dt
         self.h_min = h_min
-        self.reinit_iters = reinit_iters
+        self.Ck = c_kappa
+        self.max_reinit_iters = max_reinit_iters
+        self.reinit_tol = reinit_tol
         self.domain = domain
-        self.dτ = 0.05
+        self.dτ = dτ
         self.scalar_space, self.vector_space, self.ϕ, self.ϵ, self.κ, self.n, self.h, self.grad_ϕ = create_spaces_and_functions(domain.mesh, p)
-        self.ϵ = dolfinx.fem.Constant(self.scalar_space.mesh, h_min / 2)
+        self.ϵ = dolfinx.fem.Constant(self.scalar_space.mesh, 2 * h_min)
         self.advection_bcs = []
         self.reinit_bcs = []
         self.n = dolfinx.fem.Function(self.vector_space)
+        self.phi_temp = dolfinx.fem.Function(self.scalar_space)
         self.options = solver_options
+        self.sym_bcs = sym_bcs
         self.m = 100
 
 
@@ -63,54 +68,106 @@ class ConservativeLevelSet:
         self.reinit_bcs = [bc]
 
     def compute_curvature(self):
-        assert self.normal_projector is not None
-        self.normal_projector.compute_normals()
-        n = self.normal_projector.n
-        self.curvature_projector = EllipticProjector(0)
-        self.curvature_projector.build_problem(self.ϕ.function_space, -ufl.div(n), self.h_min)
-        self.curvature_projector.project()
-        return self.curvature_projector.solution
+        g = self.grad_ϕ
+        gnorm = ufl.sqrt(ufl.inner(g, g) + 1e-8)
+        trail = ufl.TrialFunction(self.scalar_space)
+        test = ufl.TestFunction(self.scalar_space)
+        form = (trail * test - (-ufl.div(g / gnorm)) * test + self.Ck * self.h_min * self.h_min * ufl.inner(ufl.grad(trail), ufl.grad(test))) * ufl.dx
+
+        lhs = dolfinx.fem.form(ufl.lhs(form))
+        rhs = dolfinx.fem.form(ufl.rhs(form))
+        problem = dolfinx.fem.petsc.LinearProblem(
+            lhs,
+            rhs,
+            bcs=[],
+            u=self.κ,
+            petsc_options={"ksp_type": "minres", "pc_type": "hypre"},
+            petsc_options_prefix="curvature_"
+        )
+        problem.solve()
     
-    def compute_normals(self):
-        α = 1e-4
+    def compute_gradient(self):
+        trail = ufl.TrialFunction(self.vector_space)
+        test = ufl.TestFunction(self.vector_space)
+        form = (ufl.inner(trail, test) - ufl.inner(ufl.grad(self.ϕ), test) + self.Ck * self.h_min * self.h_min * ufl.inner(ufl.grad(trail), ufl.grad(test))) * ufl.dx
+        lhs = dolfinx.fem.form(ufl.lhs(form))
+        rhs = dolfinx.fem.form(ufl.rhs(form))
+        boundary_facets_x0 = dolfinx.mesh.locate_entities_boundary(self.domain.mesh, self.domain.mesh.topology.dim - 1, lambda x: np.isclose(x[0], 0))
+        boundary_dofs_x0 = dolfinx.fem.locate_dofs_topological(self.vector_space.sub(0), self.domain.mesh.topology.dim - 1, boundary_facets_x0)
+        bc_x0 = dolfinx.fem.dirichletbc(dolfinx.default_scalar_type(0), boundary_dofs_x0, self.vector_space.sub(0))
+
+        boundary_facets_y0 = dolfinx.mesh.locate_entities_boundary(self.domain.mesh, self.domain.mesh.topology.dim - 1, lambda x: np.isclose(x[1], 0))
+        boundary_dofs_y0 = dolfinx.fem.locate_dofs_topological(self.vector_space.sub(1), self.domain.mesh.topology.dim - 1, boundary_facets_y0)
+        bc_y0 = dolfinx.fem.dirichletbc(dolfinx.default_scalar_type(0), boundary_dofs_y0, self.vector_space.sub(1))
+        problem = dolfinx.fem.petsc.LinearProblem(
+            lhs,
+            rhs,
+            bcs=([bc_x0, bc_y0] if self.sym_bcs else []),
+            u=self.grad_ϕ,
+            petsc_options={"ksp_type": "minres", "pc_type": "hypre"},
+            petsc_options_prefix="gradient_"
+        )
+        problem.solve()
+    
+    def build_normal_problem(self):
+        α = 1e-2
         β = 10
         trail = ufl.TrialFunction(self.vector_space)
         test = ufl.TestFunction(self.vector_space)
         g = ufl.grad(self.ϕ)
         ϵ = self.ϵ
         m = ϵ * g / ufl.sqrt(ϵ*ϵ*ufl.inner(g, g) + α*α*ufl.exp(-β*ϵ*ϵ*ufl.inner(g, g)))
-        
+
+        # Build the boundary normal
+        m_norm_mag = dolfinx.fem.Function(self.scalar_space)
+        interpolate_expression(
+            ϵ * ufl.sqrt(ufl.inner(g, g)) / ufl.sqrt(ϵ*ϵ*ufl.inner(g, g) + α*α*ufl.exp(-β*ϵ*ϵ*ufl.inner(g, g))),
+            m_norm_mag
+        )
+        bc_fun_x0 = dolfinx.fem.Function(self.vector_space)
+        bc_fun_y0 = dolfinx.fem.Function(self.vector_space)
+        e1 = dolfinx.fem.Constant(self.vector_space.mesh, dolfinx.default_scalar_type((1, 0)))
+        e2 = dolfinx.fem.Constant(self.vector_space.mesh, dolfinx.default_scalar_type((0, 1)))
+        interpolate_expression(-m_norm_mag * e2, bc_fun_x0)
+        interpolate_expression(-m_norm_mag * e1, bc_fun_y0)
+
         lhs = ufl.inner(trail, test) * ufl.dx
         rhs = ufl.inner(m, test) * ufl.dx
-        bc_val_x0 = np.array([0.0, -1.0])
-        bc_val_y0 = np.array([-1.0, 0.0])
         zero_bc_val = np.array([0.0, 0.0])
         domain = self.domain.mesh
-        facets_x0 = dolfinx.mesh.locate_entities_boundary(domain, domain.topology.dim-1, 
-                                                lambda x: np.isclose(x[0], 0))
-        facets_y0 =dolfinx.mesh.locate_entities_boundary(domain, domain.topology.dim-1, 
-                                                lambda x: np.isclose(x[1], 0))
+        # facets_x0 = dolfinx.mesh.locate_entities_boundary(domain, domain.topology.dim-1, 
+        #                                         lambda x: np.isclose(x[0], 0))
+        # facets_y0 =dolfinx.mesh.locate_entities_boundary(domain, domain.topology.dim-1, 
+        #                                         lambda x: np.isclose(x[1], 0))
         facets_x1 = dolfinx.mesh.locate_entities_boundary(domain, domain.topology.dim-1, 
-                                                lambda x: np.isclose(x[0], 1))
+                                                lambda x: np.isclose(x[0], 2))
         facets_y1 =dolfinx.mesh.locate_entities_boundary(domain, domain.topology.dim-1, 
-                                                lambda x: np.isclose(x[1], 1))
-        dofs_x0 = dolfinx.fem.locate_dofs_topological(self.n.function_space, domain.topology.dim-1, facets_x0)
-        dofs_y0 = dolfinx.fem.locate_dofs_topological(self.n.function_space, domain.topology.dim-1, facets_y0)
+                                                 lambda x: np.isclose(x[1], 2))
+        # dofs_x0 = dolfinx.fem.locate_dofs_topological(self.n.function_space, domain.topology.dim-1, facets_x0)
+        # dofs_y0 = dolfinx.fem.locate_dofs_topological(self.n.function_space, domain.topology.dim-1, facets_y0)
         dofs_x1 = dolfinx.fem.locate_dofs_topological(self.n.function_space, domain.topology.dim-1, facets_x1)
         dofs_y1 = dolfinx.fem.locate_dofs_topological(self.n.function_space, domain.topology.dim-1, facets_y1)
-        bc_x0 = dolfinx.fem.dirichletbc(bc_val_x0, dofs_x0, self.n.function_space)
-        bc_y0 = dolfinx.fem.dirichletbc(bc_val_y0, dofs_y0, self.n.function_space)
+
+        boundary_facets_x0 = dolfinx.mesh.locate_entities_boundary(self.domain.mesh, self.domain.mesh.topology.dim - 1, lambda x: np.isclose(x[0], 0))
+        boundary_dofs_x0 = dolfinx.fem.locate_dofs_topological(self.vector_space.sub(0), self.domain.mesh.topology.dim - 1, boundary_facets_x0)
+        bc_x0 = dolfinx.fem.dirichletbc(dolfinx.default_scalar_type(0), boundary_dofs_x0, self.vector_space.sub(0))
+
+        boundary_facets_y0 = dolfinx.mesh.locate_entities_boundary(self.domain.mesh, self.domain.mesh.topology.dim - 1, lambda x: np.isclose(x[1], 0))
+        boundary_dofs_y0 = dolfinx.fem.locate_dofs_topological(self.vector_space.sub(1), self.domain.mesh.topology.dim - 1, boundary_facets_y0)
+        bc_y0 = dolfinx.fem.dirichletbc(dolfinx.default_scalar_type(0), boundary_dofs_y0, self.vector_space.sub(1))
+
+        # bc_x0 = dolfinx.fem.dirichletbc(bc_fun_x0, dofs_x0)
+        # bc_y0 = dolfinx.fem.dirichletbc(bc_fun_y0, dofs_y0)
         bc_x1 = dolfinx.fem.dirichletbc(zero_bc_val, dofs_x1, self.n.function_space)
         bc_y1 = dolfinx.fem.dirichletbc(zero_bc_val, dofs_y1, self.n.function_space)
-        problem = dolfinx.fem.petsc.LinearProblem(
+        self.normal_problem = dolfinx.fem.petsc.LinearProblem(
             dolfinx.fem.form(lhs),
             dolfinx.fem.form(rhs),
-            bcs=[bc_y0, bc_x0, bc_x1, bc_y1],
+            bcs=([bc_x0, bc_y0] if self.sym_bcs  else []),
             u=self.n,
-            petsc_options={"ksp_type": "minres", "pc_type": "hypre"},
+            petsc_options={"ksp_type": "cg", "pc_type": "jacobi"},
             petsc_options_prefix="normal_"
         )
-        problem.solve()
 
 
     def build_gls_advection_problem(self, u: dolfinx.fem.Function):
@@ -119,7 +176,7 @@ class ConservativeLevelSet:
         dt = self.dt
         ϕ = self.ϕ
         c = 1
-        δ = c * ufl.CellDiameter(ϕ.function_space.mesh) / (2 * ufl.sqrt(ufl.inner(u, u)))
+        δ = c * ufl.CellDiameter(ϕ.function_space.mesh) / (2 * ufl.sqrt(ufl.inner(u, u) +  1e-10**2))
         def L(ϕ):
             return 1/dt * ϕ + 1/2 * ufl.div(ϕ * u)
         f = 1/dt * ϕ - 1/2 * ufl.div(ϕ * u)
@@ -139,17 +196,15 @@ class ConservativeLevelSet:
         dτ = self.dτ
         ϕ = ufl.min_value(ufl.max_value(self.ϕ, 0.0), 1.0)
         trial, test = self.trial, self.test
-        if use_mesh_eps:
-            ϵ = ufl.CellDiameter(self.ϕ.function_space.mesh) / 2
-        else:
-            ϵ = self.ϵ
         n = self.n
+        ϵ = self.ϵ
+        n_mesh = ufl.FacetNormal(self.domain.mesh)
         form = (
             1/dτ*(trial-ϕ)*test
             +1/2*ufl.div((trial+ϕ-2*trial*ϕ)*n)*test
             +ϵ/2*ufl.inner(ufl.grad(trial+ϕ),n)*ufl.inner(ufl.grad(test), n)
             +ϵ/2*ufl.inner((1-ufl.inner(n,n))*ufl.grad(trial+ϕ), ufl.grad(test))
-        ) * ufl.dx
+        ) * ufl.dx# + 1/self.h_min * ufl.inner(ufl.grad(ϕ), n_mesh) * ufl.ds
 
         rhs = dolfinx.fem.form(ufl.rhs(form))
         lhs = dolfinx.fem.form(ufl.lhs(form))
@@ -166,31 +221,28 @@ class ConservativeLevelSet:
     
     def build_problems(self, u):
         self.create_test_and_trail_functions()
-        # self.normal_projector = NormalProjector(self.ϕ, self.h_min, self.p, self.c_normal)
-        self.normal_projector.build_problem()
         self.build_gls_advection_problem(u)
-        self.gls_advection_problem.solve()
-        self.build_reinit_problem()
+        self.build_normal_problem()
+        self.build_reinit_problem(use_mesh_eps=False)
 
 
-    def advect(self, u, show=True):
-        self.create_test_and_trail_functions()
-        self.build_gls_advection_problem(u)
+    def advect(self, show=False):
         self.gls_advection_problem.solve()
-        self.compute_normals()
-        self.build_reinit_problem()
-        last = dolfinx.fem.Function(solver.scalar_space)
-        last.x.array[:] = solver.ϕ.x.array
-        for _ in range(self.reinit_iters):
+        self.normal_problem.solve()
+        self.phi_temp.x.array[:] = self.ϕ.x.array
+        for i in range(self.max_reinit_iters):
             self.reinit_problem.solve()
-            res = dolfinx.fem.form((phi_m - solver.ϕ) * (phi_m - solver.ϕ) * ufl.dx)
+            res = dolfinx.fem.form((self.phi_temp - self.ϕ) * (self.phi_temp - self.ϕ) * ufl.dx)
             res = dolfinx.fem.assemble_scalar(res)
-            phi_m.x.array[:] = solver.ϕ.x.array
-            if res < 1e-4:
-                print(f"converged after {i + 1} iterations")
-                break
             if show:
-                print("REINIT Residual:", res)
+                print("LSRE tol:", res)
+            self.phi_temp.x.array[:] = self.ϕ.x.array
+            if res < self.reinit_tol:
+                if show:
+                    print(f"LS-REINIT converged after {i + 1} iterations.")
+                return
+       
+        
 
 
         
@@ -234,7 +286,7 @@ class AdaptiveLevelSetDomain:
         interpolate_expression(grad_norm_expr, norm_grad_ϕ)
         return norm_grad_ϕ
 
-    def remesh(self, solver: ConservativeLevelSet, interface_tol=0.2, sample_rate=1, show=False):
+    def remesh(self, solver: ConservativeLevelSet, interface_tol=0.1, sample_rate=1, show=False):
         self.mesh.comm.Barrier()
         comm = self.mesh.comm
         local_num_dofs = solver.ϕ.function_space.dofmap.index_map.size_local
@@ -247,7 +299,7 @@ class AdaptiveLevelSetDomain:
             # Genourate the new mesh
             gmsh.model.add("refined_mesh")
             phi_values = np.concatenate(phi_values)
-            #coords = np.concatenate(coords)
+            coords = np.concatenate(coords)
             # p = 0.02
             # THIS IS A GOOD, extect if phi is not in [0, 1] the remeshing indicator doesnt behave well, i.e nans
             # basically means reinitalatins isnt working properly.
@@ -261,16 +313,16 @@ class AdaptiveLevelSetDomain:
             #print(np.min(t), np.max(t))
             #cell_area = self.h_min * (1 - t) + t * self.h_max
 
-            #view_data = np.column_stack((coords, cell_area)).flatten()
-            #h_view = gmsh.view.add("hView")
-            #gmsh.view.add_list_data(h_view, "SP", len(coords), view_data)
+            view_data = np.column_stack((coords, phi_values)).flatten()
+            phi_view = gmsh.view.add("phiView")
+            gmsh.view.add_list_data(phi_view, "SP", len(coords), view_data)
 
-            #h_field = gmsh.model.mesh.field.add("PostView")
-            #gmsh.model.mesh.field.setNumber(h_field, "ViewIndex", 0)
+            phi_field = gmsh.model.mesh.field.add("PostView")
+            gmsh.model.mesh.field.setNumber(phi_field, "ViewIndex", 0)
 
 
 
-            coords = np.concatenate(coords)
+            #coords = np.concatenate(coords)
             interface_inds = np.abs(phi_values - 0.5) < interface_tol
             interface_point_tags = [gmsh.model.occ.add_point(*p) for p in coords[interface_inds][::sample_rate]]
 
@@ -287,10 +339,17 @@ class AdaptiveLevelSetDomain:
             gmsh.model.mesh.field.set_number(threshold_field, "InField", distance_field)
             gmsh.model.mesh.field.setNumber(threshold_field, "SizeMin", self.h_min)
             gmsh.model.mesh.field.setNumber(threshold_field, "SizeMax", self.h_max)
-            gmsh.model.mesh.field.setNumber(threshold_field, "DistMin", 3 * self.h_min)
-            gmsh.model.mesh.field.setNumber(threshold_field, "DistMax", 20 * self.h_min)
+            gmsh.model.mesh.field.setNumber(threshold_field, "DistMin", 1.5 * 1.5 * self.h_min)
+            gmsh.model.mesh.field.setNumber(threshold_field, "DistMax", 6 * 20 * self.h_min)
+            
 
             gmsh.model.mesh.field.setAsBackgroundMesh(threshold_field)
+
+            gmsh.model.mesh.setRecombine(2, surf) 
+            gmsh.option.setNumber("Mesh.Algorithm", 8) # Frontal-Delaunay for Quads
+            gmsh.option.setNumber("Mesh.RecombinationAlgorithm", 2) # simple or blossomed
+            gmsh.option.setNumber("Mesh.SubdivisionAlgorithm", 0) # 1: all quads, 0: none
+
             gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
             gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
             gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
@@ -311,7 +370,7 @@ class AdaptiveLevelSetDomain:
         scalar_space, vector_space, ϕ, ϵ, κ, n, h, grad_ϕ = create_spaces_and_functions(new_mesh, solver.p)
         # Interpolate old ϕ into new mesh
         interpolate_from_old_mesh(solver.ϕ, ϕ, self.tree)
-        ϵ = dolfinx.fem.Constant(scalar_space.mesh, self.h_min / 2)
+        ϵ = dolfinx.fem.Constant(scalar_space.mesh, 1.5 * self.h_min)
         # Update spaces and functions of solver
         solver.scalar_space, solver.vector_space, solver.ϕ, solver.ϵ, solver.κ, solver.n, solver.h, solver.grad_ϕ = scalar_space, vector_space, ϕ, ϵ, κ, n, h, grad_ϕ
         # Update the mesh and tree of the domain

@@ -9,69 +9,39 @@ import dolfinx
 
 class IncompressibleTwoPhaseFlowSolver(IncompressibleNavierStokesSolver):
 
-    def __init__(self, mesh, h, dt, rho0, rho1, mu0, mu1, sigma, g, p_phi=1, d=0.05, kinematic=True, c_kappa=2, c_normal=0.1) -> None:
-        super().__init__(mesh, dt, kinematic=kinematic)
-        self.mesh = mesh
-        self.level_set = ConservativeLevelSet(mesh, h, dt, p=p_phi, d=d, c_kappa=c_kappa, c_normal=c_normal)
-        self.rho0 = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(rho0))
-        self.rho1 = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(rho1))
-        self.mu0 = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(mu0))
-        self.mu1 = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(mu1))
-        self.has_surface_tension = sigma > 0
-        self.sigma = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type(sigma))
-        self.g = dolfinx.fem.Constant(mesh, dolfinx.default_scalar_type((0, -g)))
-        self.step_proc = None
+    def __init__(self, ls_solver: ConservativeLevelSet, dt, rho0, rho1, mu0, mu1, sigma, kinematic_bc=True) -> None:
+        super().__init__(ls_solver.domain, dt, kinematic_bc=kinematic_bc)
+        self.ls = ls_solver
+        self.rho0 = rho0
+        self.rho1 = rho1
+        self.mu0 = mu0
+        self.mu1 = mu1
+        self.sigma = sigma
 
-    def set_phi_as_circle(self, center, radius):
-        phi_c = circular_level_set(*center, radius, self.level_set.eps)
-        self.level_set.phi.interpolate(phi_c)
-
-
-    def set_dencity(self):
-        self.rho_prev.x.array[:] = self.rho.x.array[:] 
+    def set_rho(self):
+        self.rho_last.x.array[:] = self.rho.x.array[:] 
         rho = dolfinx.fem.Expression(
-            self.rho0 + (self.rho1 - self.rho0) * self.level_set.phi, self.density_space.element.interpolation_points()
+            self.rho0 + (self.rho1 - self.rho0) * self.ls.ϕ, self.scalar_space.element.interpolation_points
         )
         self.rho.interpolate(rho)
       
 
-    def set_viscosity(self):
+    def set_mu(self):
         mu = dolfinx.fem.Expression(
-            self.mu0 + (self.mu1 - self.mu0) * self.level_set.phi, self.density_space.element.interpolation_points()
+            self.mu0 + (self.mu1 - self.mu0) * self.ls.ϕ, self.scalar_space.element.interpolation_points
         )
         self.mu.interpolate(mu)
-
-    def set_body_forces(self):
-        if self.has_surface_tension:
-            kappa = self.level_set.compute_curvature()
-            grad_phi = self.level_set.normal_projector.nabla_f
-            self.F.interpolate(
-                dolfinx.fem.Expression(
-                    self.rho * self.g + self.sigma * kappa * grad_phi,
-                    self.F_space.element.interpolation_points()
-                )
-            )
-        else:
-            self.F.interpolate(
-                dolfinx.fem.Expression(
-                    self.rho * self.g,
-                    self.F_space.element.interpolation_points()
-                )
-            )
 
     
     def time_step(self, steps=1):
         for _ in range(steps):
-            self.level_set.transport(self.u)
-            self.set_dencity()
-            self.set_viscosity()
+            self.ls.advect(self.u)
+            self.set_rho()
+            self.set_mu()
             self.set_body_forces()
-            self.reset()
             self.compute_u()
 
 
-    def eval_level_set(self, x, y, force=False):
-        return fem_scalar_func_at_given_points(self.level_set.phi, self.mesh, self.tree, x, y, forse_eval=force)[-1]
     
     def velocity_magniute(self):
         mags = dolfinx.fem.Function(self.density_space)

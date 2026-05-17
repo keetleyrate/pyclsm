@@ -25,14 +25,17 @@ def eval_sol(u, points, mesh, tree, forse_eval=False):
     res[out_of_bounds_points] = np.zeros(res[out_of_bounds_points].shape)
     return res
 
-def fem_scalar_func_at_points(u_func, domain, xbounds, ybounds, npoints, forse_eval=False):
+def fem_scalar_func_at_points(u_func, domain, npoints=100):
+    X = domain.mesh.geometry.x
+    xbounds = min(X[:, 0]), max(X[:, 0])
+    ybounds = min(X[:, 1]), max(X[:, 1])
     x = np.linspace(*xbounds, npoints)
     y = np.linspace(*ybounds, npoints)
     x, y = np.meshgrid(x, y, indexing="ij")
     points = np.zeros((3, npoints ** 2))
     points[0] = x.flatten()
     points[1] = y.flatten()
-    u = eval_sol(u_func, points, domain.mesh, domain.tree, forse_eval)
+    u = eval_sol(u_func, points, domain.mesh, domain.tree, False)
     return x.reshape((npoints, npoints)), y.reshape((npoints, npoints)), u.reshape((npoints, npoints))
 
 def fem_scalar_func_at_given_points(u_func, solver, x, y, forse_eval=False):
@@ -42,14 +45,17 @@ def fem_scalar_func_at_given_points(u_func, solver, x, y, forse_eval=False):
     u = eval_sol(u_func, points, solver.mesh, solver.tree, forse_eval=forse_eval)
     return x, y, u
 
-def fem_vector_func_at_points(u_func, solver, xbounds, ybounds, npoints, forse_eval=False):
+def fem_vector_func_at_points(u_func, domain, npoints):
+    X = domain.mesh.geometry.x
+    xbounds = min(X[:, 0]), max(X[:, 0])
+    ybounds = min(X[:, 1]), max(X[:, 1])
     x = np.linspace(*xbounds, npoints)
     y = np.linspace(*ybounds, npoints)
     x, y = np.meshgrid(x, y, indexing="ij")
     points = np.zeros((3, npoints ** 2))
     points[0] = x.flatten()
     points[1] = y.flatten()
-    uvs = eval_sol(u_func, points, solver.mesh, solver.tree, forse_eval=forse_eval)
+    uvs = eval_sol(u_func, points, domain.mesh, domain.tree, forse_eval=False)
     u = np.array(list(uv[0] for uv in uvs))
     v = np.array(list(uv[1] for uv in uvs))
     return x.reshape((npoints, npoints)), y.reshape((npoints, npoints)), u.reshape((npoints, npoints)), v.reshape((npoints, npoints))
@@ -66,40 +72,28 @@ def fem_vector_func_at_given_points(u_func, solver, x, y, forse_eval=False):
 def vector_to_rgb(magitute):
     return plt.cm.viridis(magitute)
 
-def fem_plot_vectors(axes, u, solver, xbounds, ybounds, n_points, force=False, scale=None, random=False):
-    if random:
-        xrand = (xbounds[1] - xbounds[0]) * np.random.random(n_points) + xbounds[0]
-        yrand = (ybounds[1] - ybounds[0]) * np.random.random(n_points) + ybounds[0]
-        x, y, u, v = fem_vector_func_at_given_points(u, solver, xrand, yrand, forse_eval=force)
-        lengths = np.sqrt(np.square(u) + np.square(v))
-        to_remove = lengths < 1e-2 * 2
-        if sum(to_remove) != len(x):
-            x = np.delete(x, to_remove)
-            y = np.delete(y, to_remove)
-            u = np.delete(u, to_remove)
-            v = np.delete(v, to_remove)
-    else:
-        x, y, u, v = fem_vector_func_at_points(u, solver, xbounds, ybounds, n_points, forse_eval=force)
+def fem_plot_vectors(axes, u, solver, n_points=50, scale=None):
+    x, y, u, v = fem_vector_func_at_points(u, solver, n_points)
     lengths = np.sqrt(np.square(u) + np.square(v))
     max_abs = np.max(lengths)
     c = np.array(list(map(plt.cm.plasma, lengths.flatten() / max_abs)))
     axes.quiver(x, y, u, v, color=c, scale=scale)
 
-def fem_plot_streamlines(axes, solver, xbounds, ybounds, n_points, colors=True, seeds=None):
+def fem_plot_streamlines(axes, solver, xbounds, ybounds, n_points=50, colors=True, seeds=None):
     x, y, u, v = fem_vector_func_at_points(solver.u, solver, xbounds, ybounds, n_points)
     lengths = np.sqrt(np.square(u.T) + np.square(v.T))
     axes.streamplot(y, x, u.T, v.T, color=lengths, cmap="cividis", density=1.5, start_points=seeds, broken_streamlines=False)
     axes.set_xlabel("$x$", fontsize=14)
     axes.set_ylabel("$y$", fontsize=14)
    
-def fem_plot_contor_filled(fig, axes, u, domain, xbounds, ybounds, n_points, levels=None, force=False, colorbar=False, norm=None, label=""):
-    x, y, u = fem_scalar_func_at_points(u, domain, xbounds, ybounds, n_points, forse_eval=force)
+def fem_plot_contor_filled(fig, axes, u, domain, n_points=100, levels=100, force=False, colorbar=False, norm=None, label=""):
+    x, y, u = fem_scalar_func_at_points(u, domain, npoints=n_points)
     conts = axes.contourf(x, y, u, cmap="plasma", levels=levels, norm=norm)
     if colorbar:
         fig.colorbar(conts, label=label)
 
-def fem_plot_contor(fig, axes, u, solver, xbounds, ybounds, n_points, levels=None, force=False, linewidths=None, colors=None):
-    x, y, u = fem_scalar_func_at_points(u, solver, xbounds, ybounds, n_points, forse_eval=force)
+def fem_plot_contor(fig, axes, u, solver, n_points=100, levels=[0.5], force=False, linewidths=None, colors=None):
+    x, y, u = fem_scalar_func_at_points(u, solver, n_points)
     if levels is None:
         conts = axes.contour(x, y, u)
         fig.colorbar(conts)
