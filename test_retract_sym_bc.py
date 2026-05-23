@@ -13,20 +13,35 @@ import pickle
 def com(domain, ϕ):
     x = ufl.SpatialCoordinate(domain.mesh)
     M = dolfinx.fem.assemble_scalar(dolfinx.fem.form(ϕ * ufl.dx))
-    x0 = dolfinx.fem.assemble_vector(dolfinx.fem.form(1 / M * x * ϕ * ufl.dx))
-    return M, x0
+    x00 = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 / M * x[0] * ϕ * ufl.dx))
+    x01 = dolfinx.fem.assemble_scalar(dolfinx.fem.form(1 / M * x[1] * ϕ * ufl.dx))
+    return M, np.array([x00, x01])
 
 def ar_eff(domain, ϕ):
     x = ufl.SpatialCoordinate(domain.mesh)
     M, x0 = com(domain, ϕ)
+    print(x0)
     c00 = 1 / M * dolfinx.fem.assemble_scalar(dolfinx.fem.form(ϕ * (x[0] - x0[0])*(x[0] - x0[0]) * ufl.dx))
     c01 = 1 / M * dolfinx.fem.assemble_scalar(dolfinx.fem.form(ϕ * (x[0] - x0[0])*(x[1] - x0[1]) * ufl.dx))
     c10 = 1 / M * dolfinx.fem.assemble_scalar(dolfinx.fem.form(ϕ * (x[1] - x0[1])*(x[0] - x0[0]) * ufl.dx))
     c11 = 1 / M * dolfinx.fem.assemble_scalar(dolfinx.fem.form(ϕ * (x[1] - x0[1])*(x[1] - x0[1]) * ufl.dx))
-    C = np.array([c00, c01], [c10, c11])
+    C = np.array([[c00, c01], [c10, c11]])
     l1, l2 = np.linalg.eig(C).eigenvalues
     l1, l2 = max(l1, l2), min(l1, l2)
     return np.sqrt(l1 / l2)
+
+
+def build_grid_function_scalar(domain, f, npoints):
+    x = np.linspace(0, 1, 3)
+
+    x, y = np.meshgrid(x, x)
+    print(x)
+    # x, y, fs = fem_scalar_func_at_points(f, domain, npoints)
+    x_full, y_full = np.meshgrid(np.linspace(-np.max(x), np.max(x), 2*len(x)-1), np.linspace(-np.max(y), np.max(y), 2*len(x)-1))
+    print(x_full)
+
+build_grid_function_scalar(0, 0, 0)
+
 
 
 
@@ -46,16 +61,15 @@ def g_ellipce(x):
 
 def inital_condtion(X, h):
     d = np.array([sdf.signed_distance_to_zero_level_set(f_ellipce, g_ellipce, (xi, yi)) for xi, yi in tqdm(zip(X[0], X[1]))])
-    return 1 / (1 + np.exp(d / (2 * h)))
+    return 1 / (1 + np.exp(d / ( h)))
 
 
-def problem(C):
-    folder = pathlib.Path(f"test_quater_alt_kappa.bp")
+def problem():
+    folder = pathlib.Path(f"retract.bp")
     n = 128
-
     L = 3
     h = L / n 
-    dt = 0.01#0.8 * np.sqrt(h**3 / (4 * np.pi))
+    dt = np.sqrt(h**3 / (4 * np.pi))
     domain = FixedDomain(n, [0, 0], [L, L])
     ls = ConservativeLevelSet(domain, h, dt, solver_options={"fix_interface": True}, c_kappa=0, sym_bcs=True)
     solver = IncompressibleTwoPhaseFlowSolver(ls, dt, rho0=1, rho1=1, mu0=1, mu1=1, sigma=1, kinematic_bc=True)
@@ -74,19 +88,22 @@ def problem(C):
     solver.build_corrector_problem()
     solver.build_predictor_problem(f)
     solver.ls.build_problems(solver.u)
+    solver.ls.reinit()
 
 
     adios4dolfinx.write_mesh(folder, domain.mesh)
-    T = 0.2
-    for i in tqdm(range(math.ceil(T / solver.dt))):
+    T = 20
+    n_steps = math.ceil(T / solver.dt)
+    for i in tqdm(range(n_steps)):
         t = solver.dt * i
-        adios4dolfinx.write_function(folder, solver.ls.ϕ, time=i, name="phi")
-        adios4dolfinx.write_function(folder, solver.u, time=i, name="u")
-        adios4dolfinx.write_function(folder, solver.p, time=i, name="p")
+        if i % 50 == 0 or i == n_steps - 1:
+            adios4dolfinx.write_function(folder, solver.ls.ϕ, time=i, name="phi")
+            adios4dolfinx.write_function(folder, solver.u, time=i, name="u")
+            adios4dolfinx.write_function(folder, solver.p, time=i, name="p")
+            adios4dolfinx.write_function(folder, solver.ls.κ, time=i, name="k")
         solver.ls.compute_gradient()
         solver.ls.normal_problem.solve()
         solver.ls.compute_curvature()
-        adios4dolfinx.write_function(folder, solver.ls.κ, time=i, name="k")
         interpolate_expression(solver.sigma * solver.ls.κ * solver.ls.grad_ϕ, f)
         solver.build_predictor_problem(f)
         solver.compute_u()
@@ -95,17 +112,17 @@ def problem(C):
 a = 1.1055
 b = 0.9045
 
-# problem(0)
+# problem()
 
-fig, ax = plt.subplots(2, 2)
-ax[0, 0].set_xlabel("$x$")
-ax[0, 0].set_ylabel("$u$")
-ax[0, 1].set_xlabel("$x$")
-ax[0, 1].set_ylabel("$v$")
-ax[1, 0].set_xlabel("$x$")
-ax[1, 0].set_ylabel(r"$\phi$")
-ax[1, 1].set_xlabel("$x$")
-ax[1, 1].set_ylabel(r"$\kappa$")
+# fig, ax = plt.subplots(2, 2)
+# ax[0, 0].set_xlabel("$x$")
+# ax[0, 0].set_ylabel("$u$")
+# ax[0, 1].set_xlabel("$x$")
+# ax[0, 1].set_ylabel("$v$")
+# ax[1, 0].set_xlabel("$x$")
+# ax[1, 0].set_ylabel(r"$\phi$")
+# ax[1, 1].set_xlabel("$x$")
+# ax[1, 1].set_ylabel(r"$\kappa$")
 # in_mesh = adios4dolfinx.read_mesh(folder, MPI.COMM_WORLD)
 # domain = FixedDomain([0, 0], [L, L])
 # domain.mesh = in_mesh
@@ -117,67 +134,45 @@ ax[1, 1].set_ylabel(r"$\kappa$")
 # u = dolfinx.fem.Function(V)
 # phi = dolfinx.fem.Function(S)
 # kappa = dolfinx.fem.Function(S)
-L = 3
-n = 128
-for C in [0, 16]:
-    dt = 0.01
-    folder = pathlib.Path(f"test_quater_{C}.bp")
-    in_mesh = adios4dolfinx.read_mesh(folder, MPI.COMM_WORLD)
-    domain = FixedDomain(n, [0, 0], [L, L])
-    domain.mesh = in_mesh
-    domain.tree = dolfinx.geometry.bb_tree(in_mesh, 2)
-    v_el = basix.ufl.element("Lagrange", in_mesh.topology.cell_name(), 2, shape=(in_mesh.geometry.dim,))
-    s_el = basix.ufl.element("Lagrange", in_mesh.topology.cell_name(), 1)
-    V = dolfinx.fem.functionspace(in_mesh, v_el)
-    S = dolfinx.fem.functionspace(in_mesh, s_el)
-    u = dolfinx.fem.Function(V)
-    phi = dolfinx.fem.Function(S)
-    kappa = dolfinx.fem.Function(S)
-    for i in [19]:
-        adios4dolfinx.read_function(folder, u, time=i, name="u")
-        adios4dolfinx.read_function(folder, phi, time=i, name="phi")
-        adios4dolfinx.read_function(folder, kappa, time=i, name="k")
-    
-        x, y, us, vs = fem_vector_func_at_given_points(u, domain, np.linspace(0, 3, 250), np.zeros(250))
-        ax[0, 0].plot(x, us, label=f"$t={(i + 1)*dt:.2f}, C={C}$")
-        ax[0, 1].plot(x, vs, label=f"$t={(i + 1)*dt:.2f}, C={C}$")
-        x, y, phis = fem_scalar_func_at_given_points(phi, domain, np.linspace(0, 3, 250), np.zeros(250))
-        x, y, ks = fem_scalar_func_at_given_points(kappa, domain, np.linspace(0, 3, 250), np.zeros(250))
-        ax[1, 0].plot(x, phis, label=f"$t={(i + 1)*dt}, C={C}$")
-        ax[1, 1].plot(x, ks, label=f"$t={(i + 1)*dt}, C={C}$")
 
-dt = 0.01
-folder = pathlib.Path(f"test_quater_alt_kappa.bp")
-in_mesh = adios4dolfinx.read_mesh(folder, MPI.COMM_WORLD)
-domain = FixedDomain(n, [0, 0], [L, L])
-domain.mesh = in_mesh
-domain.tree = dolfinx.geometry.bb_tree(in_mesh, 2)
-v_el = basix.ufl.element("Lagrange", in_mesh.topology.cell_name(), 2, shape=(in_mesh.geometry.dim,))
-s_el = basix.ufl.element("Lagrange", in_mesh.topology.cell_name(), 1)
-V = dolfinx.fem.functionspace(in_mesh, v_el)
-S = dolfinx.fem.functionspace(in_mesh, s_el)
-u = dolfinx.fem.Function(V)
-phi = dolfinx.fem.Function(S)
-kappa = dolfinx.fem.Function(S)
-for i in [19]:
-    adios4dolfinx.read_function(folder, u, time=i, name="u")
-    adios4dolfinx.read_function(folder, phi, time=i, name="phi")
-    adios4dolfinx.read_function(folder, kappa, time=i, name="k")
-
-    x, y, us, vs = fem_vector_func_at_given_points(u, domain, np.linspace(0, 3, 250), np.zeros(250))
-    ax[0, 0].plot(x, us, label=f"$t={(i + 1)*dt:.2f}, stab$")
-    ax[0, 1].plot(x, vs, label=f"$t={(i + 1)*dt:.2f}, stab$")
-    x, y, phis = fem_scalar_func_at_given_points(phi, domain, np.linspace(0, 3, 250), np.zeros(250))
-    x, y, ks = fem_scalar_func_at_given_points(kappa, domain, np.linspace(0, 3, 250), np.zeros(250))
-    ax[1, 0].plot(x, phis, label=f"$t={(i + 1)*dt}, stab$")
-    ax[1, 1].plot(x, ks, label=f"$t={(i + 1)*dt}, stab$")
-
-       # x, y, uss, vss = fem_vector_func_at_points(u, domain, 30)
-        # data[i]["vecs"] = (x, y, uss, vss)
-# with open("sym_data.pkl", "wb") as outfile:
-#     pickle.dump(data, outfile) 
-ax[0, 0].legend()
-plt.show()
+# L = 3
+# n = 128
+# h = L / n
+# dt = np.sqrt(h**3 / (4 * np.pi))
+# n_steps = math.ceil(20 / dt)
+# folder = pathlib.Path(f"retract.bp")
+# in_mesh = adios4dolfinx.read_mesh(folder, MPI.COMM_WORLD)
+# domain = FixedDomain(n, [0, 0], [L, L])
+# domain.mesh = in_mesh
+# domain.tree = dolfinx.geometry.bb_tree(in_mesh, 2)
+# v_el = basix.ufl.element("Lagrange", in_mesh.topology.cell_name(), 2, shape=(in_mesh.geometry.dim,))
+# s_el = basix.ufl.element("Lagrange", in_mesh.topology.cell_name(), 1)
+# V = dolfinx.fem.functionspace(in_mesh, v_el)
+# S = dolfinx.fem.functionspace(in_mesh, s_el)
+# u = dolfinx.fem.Function(V)
+# phi = dolfinx.fem.Function(S)
+# kappa = dolfinx.fem.Function(S)
+# ar = []
+# for i in range(0, n_steps, 2000):
+#     adios4dolfinx.read_function(folder, u, time=i, name="u")
+#     adios4dolfinx.read_function(folder, phi, time=i, name="phi")
+#     adios4dolfinx.read_function(folder, kappa, time=i, name="k")
+#     ar.append(ar_eff(domain, phi))
+#     print(ar[-1])
+#
+#
+#
+#     # x, y, us, vs = fem_vector_func_at_given_points(u, domain, np.linspace(0, 3, 250), np.zeros(250))
+#     # ax[0, 0].plot(x, us, label=f"$t={(i + 1)*dt:.2f}$")
+#     # ax[0, 1].plot(x, vs, label=f"$t={(i + 1)*dt:.2f}$")
+#     # x, y, phis = fem_scalar_func_at_given_points(phi, domain, np.linspace(0, 3, 250), np.zeros(250))
+#     # x, y, ks = fem_scalar_func_at_given_points(kappa, domain, np.linspace(0, 3, 250), np.zeros(250))
+#     # ax[1, 0].plot(x, phis, label=f"$t={(i + 1)*dt}$")
+#     # ax[1, 1].plot(x, ks, label=f"$t={(i + 1)*dt}$")
+# ax = plt.axes()
+# ax.plot(np.linspace(0, 20, len(ar)), ar)
+# # ax[0, 0].legend()
+# plt.show()
 
 
 

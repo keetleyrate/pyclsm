@@ -38,7 +38,7 @@ def create_spaces_and_functions(mesh, p):
 class ConservativeLevelSet:
 
 
-    def __init__(self, domain, h_min, dt, dτ=0.05, p=1, c_kappa=2, reinit_tol=1e-5, sym_bcs=False, max_reinit_iters=10, solver_options=None | dict) -> None:
+    def __init__(self, domain, h_min, dt, dτ=0.05, p=1, c_kappa=2, reinit_tol=1e-5, sym_bcs=False, max_reinit_iters=100, solver_options=None | dict) -> None:
         self.p = p
         self.dt = dt
         self.h_min = h_min
@@ -69,10 +69,10 @@ class ConservativeLevelSet:
 
     def compute_curvature(self):
         g = self.grad_ϕ
-        gnorm = ufl.sqrt(ufl.inner(g, g) + 1e-8)
+        gnorm = ufl.sqrt(ufl.inner(g, g) + 1e-3)
         trail = ufl.TrialFunction(self.scalar_space)
         test = ufl.TestFunction(self.scalar_space)
-        form = (trail * test - (-ufl.div(g / gnorm)) * test + self.Ck * self.h_min * self.h_min * ufl.inner(ufl.grad(trail), ufl.grad(test))) * ufl.dx
+        form = (trail * test - ufl.inner(g/gnorm, ufl.grad(test)) + self.Ck * self.h_min * self.h_min * ufl.inner(ufl.grad(trail), ufl.grad(test))) * ufl.dx
 
         lhs = dolfinx.fem.form(ufl.lhs(form))
         rhs = dolfinx.fem.form(ufl.rhs(form))
@@ -225,11 +225,7 @@ class ConservativeLevelSet:
         self.build_normal_problem()
         self.build_reinit_problem(use_mesh_eps=False)
 
-
-    def advect(self, show=False):
-        self.gls_advection_problem.solve()
-        self.normal_problem.solve()
-        self.phi_temp.x.array[:] = self.ϕ.x.array
+    def reinit(self, show=False):
         for i in range(self.max_reinit_iters):
             self.reinit_problem.solve()
             res = dolfinx.fem.form((self.phi_temp - self.ϕ) * (self.phi_temp - self.ϕ) * ufl.dx)
@@ -241,6 +237,15 @@ class ConservativeLevelSet:
                 if show:
                     print(f"LS-REINIT converged after {i + 1} iterations.")
                 return
+
+
+
+    def advect(self, show=False):
+        self.gls_advection_problem.solve()
+        self.normal_problem.solve()
+        self.phi_temp.x.array[:] = self.ϕ.x.array
+        self.reinit(show=show)
+
        
         
 
