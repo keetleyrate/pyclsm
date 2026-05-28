@@ -104,7 +104,7 @@ class ConservativeLevelSet:
             rhs,
             bcs=([bc_x0, bc_y0] if self.sym_bcs else []),
             u=self.grad_ϕ,
-            petsc_options={"ksp_type": "minres", "pc_type": "hypre"},
+            petsc_options={"ksp_type": "gmres", "pc_type": "hypre"},
             petsc_options_prefix="gradient_"
         )
         problem.solve()
@@ -187,7 +187,7 @@ class ConservativeLevelSet:
             dolfinx.fem.form(rhs),
             bcs=self.advection_bcs,
             u=self.ϕ,
-            petsc_options={"ksp_type": "minres", "pc_type": "hypre"},
+            petsc_options={"ksp_type": "gmres", "pc_type": "hypre"},
             petsc_options_prefix="gls_advection_"
         )
 

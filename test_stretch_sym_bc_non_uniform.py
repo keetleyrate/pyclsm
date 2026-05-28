@@ -8,7 +8,7 @@ import copy
 import dolfinx
 import ufl
 from tqdm import tqdm
-
+from retract_mesh import *
 
 class FixedDomain:
 
@@ -23,7 +23,7 @@ class FixedDomain:
 
 def sdf_circle(x):
     x, y, _ = x
-    r = 0.5
+    r = 0.25
     return np.sqrt((x)**2 + (y)**2) - r
 
 def get_u(domain, t, T):
@@ -46,26 +46,30 @@ ax[2].set_title(r"$t=1$")
 ax[3].set_title(r"$|\phi(0) - \phi(1)|$")
 
 domain = FixedDomain(h)
+N = 16
+
+mesh_data = generate_contact_line_mesh(0.4, 1, 64, 8)
+domain.mesh = mesh_data.mesh
+domain.tree = dolfinx.geometry.bb_tree(domain.mesh, 2)
 solver = ConservativeLevelSet(
     domain,
     h,
     dt,
-    solver_options={"normal_method": "std", "fix_inteface": True},
-    sym_bcs=True
+    sym_bcs=True,
+    solver_options={"normal_method": "std", "fix_inteface": True}
 )
-solver.ϕ.interpolate(lambda x: 1/(1 + np.exp(sdf_circle(x) / (2 * h))))
-T = 0.1
+solver.ϕ.interpolate(lambda x: 1/(1 + np.exp(sdf_circle(x) / (1.5 * h))))
+fem_plot_contor_filled(fig, ax[0], solver.ϕ, domain)
+fem_plot_contor(fig, ax[0], solver.ϕ, domain, colors=["black"])
+x, y, inital_phi_grid = fem_scalar_func_at_points(solver.φ, domain)
+T = 1
 plotted = False
 
 u_space = dolfinx.fem.functionspace(domain.mesh, ("P", 2, (domain.mesh.topology.dim,)))
 u = dolfinx.fem.Function(u_space)
 u.interpolate(lambda x: (x[0], -x[1]))
 solver.build_problems(u)
-solver.normal_problem.solve()
-solver.reinit(show=True)
-fem_plot_contor_filled(fig, ax[0], solver.ϕ, domain)
-fem_plot_contor(fig, ax[0], solver.ϕ, domain, colors=["black"])
-x, y, inital_phi_grid = fem_scalar_func_at_points(solver.φ, domain)
+solver.reinit()
 for i in tqdm(range(math.ceil(T / solver.dt))):
     t = i * solver.dt
     solver.advect()

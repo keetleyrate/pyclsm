@@ -15,28 +15,6 @@ def read_solution(f):
     phi_values = phi_values.flatten()
     return points, cells, phi_values
 
-class SolutionFile:
-
-    def __init__(self, root_path):
-        self.root_path = root_path
-        self.h5_paths = sorted([path for path in os.listdir(root_path) if path.endswith(".h5")])
-        self.T = float(self.h5_paths[-1][:-3])
-
-    def read(self, t):
-        index = min(math.floor(t / self.T * (len(self.h5_paths) - 1)), len(self.h5_paths) - 1)
-        print(self.root_path + "/" + self.h5_paths[index])
-        with h5py.File(self.root_path + "/" + self.h5_paths[index], "r") as h5_file:
-            self.points, self.cells, self.values = read_solution(h5_file)
-
-    def show_mesh(self):
-        triangulation = matplotlib.tri.Triangulation(self.points[:, 0], self.points[:, 1], self.cells)
-        ax = plt.axes()
-        tpc = ax.tricontourf(triangulation, self.values, cmap='viridis', levels=100)
-        #tpc = ax.tricontour(triangulation, self.values, cmap='viridis', levels=[0.05, 0.5, 0.95])
-        ax.triplot(triangulation, color='white', lw=0.5, alpha=0.3)
-        ax.set_aspect('equal')
-        plt.show()
-
 
 class FixedDomain:
 
@@ -88,20 +66,15 @@ solver.create_test_and_trail_functions()
 #     -x[0] / (np.sqrt(x[0]**2 + x[1]**2) + 1e-8),
 #     -x[1] / (np.sqrt(x[0]**2 + x[1]**2) + 1e-8)
 # ))
-solver.compute_normals()
+solver.build_normal_problem()
+solver.normal_problem.solve()
 solver.build_reinit_problem(use_mesh_eps=False)
+
 
 phi_m = dolfinx.fem.Function(solver.scalar_space)
 phi_m.x.array[:] = solver.ϕ.x.array
 
-for i in range(10000):
-    solver.reinit_problem.solve()
-    res = dolfinx.fem.form((phi_m - solver.ϕ) * (phi_m - solver.ϕ) * ufl.dx)
-    res = dolfinx.fem.assemble_scalar(res)
-    phi_m.x.array[:] = solver.ϕ.x.array
-    if res < 1e-4:
-        print(f"converged after {i + 1} iterations")
-        break
+solver.reinit()
 
 I = dolfinx.fem.form((target_phi - solver.ϕ) * (target_phi - solver.ϕ) * ufl.dx)
 
